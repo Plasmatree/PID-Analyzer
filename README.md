@@ -18,7 +18,7 @@ Keep in mind that if you go crazy on the throttle it will cause more distortion.
 The whole thing is still under development and results/input of different and more experienced pilots will be appreciated!
  
 How to use this program:
-1. Place your logfiles, blackbox_decode.exe and [PID-Analyzer.exe](https://www.dropbox.com/s/e2vjbzw7hauu6k4/PID-Analyzer_0.11.exe?dl=0) in the same folder.
+1. Place your logfiles, [blackbox_decode.exe.exe](https://github.com/cleanflight/blackbox-tools/releases/download/v0.4.3/blackbox-tools-0.4.3-windows.zip) and [PID-Analyzer.exe](https://www.dropbox.com/s/e2vjbzw7hauu6k4/PID-Analyzer_0.11.exe?dl=0) in the same folder.
 2. Run PID_analyzer.exe (this takes some seconds, it sets up a complete virtual python environment)
 3. Drag and drop your file into the command window and press enter
 4. Type in an optional name that will be appended to the log name. Or don't. Press Enter.
@@ -33,3 +33,4 @@ In case of problems, please report including the log file.
 Happy tuning,
 
 Flo
+
