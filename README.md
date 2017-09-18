@@ -41,7 +41,9 @@ The whole thing is still under development and results/input of different and mo
 The windows executable includes a virtual python environment and only requires you to drag and drop your Betaflight blackbox logfile into the cmd window. 
 
 
-In case of problems (if the cmd closes for example), please report including the log file. \n It's only tested on Win10 and with 3.15/3.2 logs yet.
+In case of problems (if the cmd closes for example), please report including the log file.
+
+It's only tested on Win10 and with 3.15/3.2 logs.
 
 
 
