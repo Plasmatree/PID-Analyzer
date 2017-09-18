@@ -11,7 +11,7 @@ Mathematically this is called deconvolution, which is the invers to convolution:
 A 0.5s long response is calculated from a 1.5s long windowed region of interest. The window is shifted roughly 0.2s to calculate each next response. 
 From a mathematical point of view this is necessary, but makes each momentary response correspond to an interval of roughly +-0.75s.
  
-![Tuning gif](cs110 tune.gif)
+![smooth tune](example_smooth_tune_0.png)
  
 Any external input (by forced movement like wind) will result in an incomplete system and thus in a corrupted response. 
 Based on RC-input and quality the momentary response functions are weighted to reduces the impact of corruptions. Due to statistics, more data (longer logs) will further improve reliability of the result. 
