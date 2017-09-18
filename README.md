@@ -31,7 +31,7 @@ The whole thing is still under development and results/input of different and mo
  
 ## How to use this program:
 1. Record your log. Logs of 20s seem to give sufficient statistics. If it's slightly windy, longer logs can still give reasonable results. You can record multiple logs in one session: Each entry will yield a seperate plot. 
-2. Place your logfiles, [blackbox_decode.exe](https://github.com/cleanflight/blackbox-tools/releases/download/v0.4.3/blackbox-tools-0.4.3-windows.zip) and [PID-Analyzer.exe](http://bit.ly/PID-Analyzer) in the same folder.
+2. Place your logfiles, [blackbox_decode.exe](https://github.com/cleanflight/blackbox-tools/releases/download/v0.4.3/blackbox-tools-0.4.3-windows.zip) and [PID-Analyzer.exe](http://bit.ly/PID-Analyzer) in the same folder. (<-- Download links)
 3. Run PID-Analyzer.exe (this takes some seconds, it sets up a complete virtual python environment)
 4. Drag and drop your file into the command window and press enter
 5. Type in an optional name that will be appended to the log name. Or don't. Press Enter.
