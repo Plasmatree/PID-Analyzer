@@ -15,6 +15,8 @@ from matplotlib.gridspec import GridSpec
 #
 #
 
+Version = 'PID-Analyzer 0.12 '
+
 class Trace:
     framelen = 1.5
     resplen = 0.5
@@ -234,7 +236,7 @@ class CSV_log:
             plt.grid()
         meanfreq = 1./(traces[0].time_eq[1]-traces[0].time_eq[0])
         ax4 = plt.subplot(gs1[:, -1])
-        t = "PID-analyzer vers.0.1 | Betaflight: Version "+self.headdict['version']+' | Craftname: '+self.headdict['craftName']+\
+        t = Version+"| Betaflight: Version "+self.headdict['version']+' | Craftname: '+self.headdict['craftName']+\
             ' | meanFreq: '+str(int(meanfreq))+' | rcRate/Expo: '+self.headdict['rcRate']+'/'+ self.headdict['rcExpo']+'\nrcYawRate/Expo: '+self.headdict['rcYawRate']+'/' \
             +self.headdict['rcYawExpo']+' | deadBand: '+self.headdict['deadBand']+' | yawDeadBand: '+self.headdict['yawDeadBand'] \
             +' | Throttle min/tpa/max: ' + self.headdict['minThrottle']+'/'+self.headdict['tpa_breakpoint']+'/'+self.headdict['maxThrottle'] \
@@ -324,7 +326,10 @@ class BB_log:
         for l in loglist:
             os.remove(l)
             os.remove(l[:-3]+'01.csv')
-            os.remove(l[:-3]+'01.event')
+            try:
+                os.remove(l[:-3]+'01.event')
+            except:
+                print 'No .event file of '+l+' found.'
         return
 
     def _csv_iter(self, heads):
@@ -368,12 +373,23 @@ class BB_log:
                 headsdict['logNum'] = str(i)
                 if 'rcRate:' in l:
                     headsdict['rcRate'] = l[9:-1]
+                elif 'rc_rate:' in l:
+                    headsdict['rcRate'] = l[10:-1]
+
                 elif 'rcExpo:' in l:
                     headsdict['rcExpo']=l[9:-1]
+                elif 'rc_expo:' in l:
+                    headsdict['rcExpo']=l[10:-1]
+
                 elif 'rcYawRate:' in l:
                     headsdict['rcYawRate']=l[12:-1]
+                elif 'rc_rate_yaw:' in l:
+                    headsdict['rcYawRate']=l[14:-1]
                 elif 'rcYawExpo:' in l:
                     headsdict['rcYawExpo']=l[12:-1]
+                elif 'rc_expo_yaw:' in l:
+                    headsdict['rcYawExpo']=l[14:-1]
+
                 elif 'Firmware date:' in l:
                     headsdict['date']=l[16:-1]
                 elif 'Firmware revision:' in l:
@@ -400,10 +416,16 @@ class BB_log:
                     headsdict['minThrottle']=l[14:-1]
                 elif 'maxthrottle:' in l:
                     headsdict['maxThrottle']=l[14:-1]
+
                 elif 'dtermSetpointWeight:' in l:
                     headsdict['dTermSetPoint']=l[22:-1]
+                elif 'dterm_setpoint_weight:' in l:
+                    headsdict['dTermSetPoint']=l[24:-1]
+
                 elif 'vbat_pid_compensation:' in l:
                     headsdict['vbatComp']=l[24:-1]
+                elif 'vbat_pid_gain:' in l:
+                    headsdict['vbatComp']=l[16:-1]
 
             heads.append(headsdict)
         return heads
@@ -456,6 +478,10 @@ class BB_log:
 
 
 def main():
+    ### use here via:
+    #test = BB_log('path', 'test')
+    #plt.show()
+    print Version +'\n\n'
     print 'Hello Pilot!'
     print 'This program uses Blackbox_decode:\n' \
           'https://github.com/cleanflight/blackbox-tools/releases\n' \
@@ -464,7 +490,7 @@ def main():
 
     while True:
         file = raw_input("Place your log here: \n-->")
-        name = raw_input('\nName for this plot: (optional)\n')
+        name = raw_input('\n Name for this plot: (optional)\n')
         test = BB_log(str(file)[1:-1], str(name))
         plt.show()
 
