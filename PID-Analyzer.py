@@ -15,7 +15,7 @@ from matplotlib.gridspec import GridSpec
 #
 #
 
-Version = 'PID-Analyzer 0.12 '
+Version = 'PID-Analyzer 0.13 '
 
 class Trace:
     framelen = 1.5
@@ -307,7 +307,7 @@ class CSV_log:
 
 class BB_log:
     def __init__(self, filepath, name=''):
-        self.fpath = filepath
+        self.fpath = self.check_ends(filepath)
         self.path, self.file = os.path.split(self.fpath)
         self.name = name
 
@@ -317,6 +317,13 @@ class BB_log:
         self.figs = self._csv_iter(self.heads)
 
         self.deletejunk(self.loglist)
+
+    def check_ends(self, filepath):
+        filepath = str(filepath)
+        if filepath[-1]=='"' or filepath[-1]=="'":
+            return filepath[1:-1]
+        else:
+            return filepath
 
     def maketemp(self, path):
         os.mkdir(path+'/tmp')
@@ -481,6 +488,7 @@ def main():
     ### use here via:
     #test = BB_log('path', 'test')
     #plt.show()
+
     print Version +'\n\n'
     print 'Hello Pilot!'
     print 'This program uses Blackbox_decode:\n' \
@@ -491,7 +499,7 @@ def main():
     while True:
         file = raw_input("Place your log here: \n-->")
         name = raw_input('\n Name for this plot: (optional)\n')
-        test = BB_log(str(file)[1:-1], str(name))
+        test = BB_log(str(file), str(name))
         plt.show()
 
 if __name__ == "__main__":
