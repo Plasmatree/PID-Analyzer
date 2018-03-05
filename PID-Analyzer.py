@@ -4,8 +4,7 @@ from pandas import read_csv
 import matplotlib.pyplot as plt
 from scipy.interpolate import interp1d
 from matplotlib.gridspec import GridSpec
-
-
+from scipy.ndimage.filters import gaussian_filter1d
 # ----------------------------------------------------------------------------------
 # "THE BEER-WARE LICENSE" (Revision 42):
 # <florian.melsheimer@gmx.de> wrote this file. As long as you retain this notice you
@@ -15,31 +14,46 @@ from matplotlib.gridspec import GridSpec
 #
 #
 
-Version = 'PID-Analyzer 0.13 '
+Version = 'PID-Analyzer 0.2 '
 
 class Trace:
-    framelen = 1.5
+    framelen = 2.
     resplen = 0.5
-    smooth = 1.
-    tuk_alpha = 0.5
-    superpos = 16
-    threshold = 500.
-    inweigh = 2.
+    smooth = 1.         #
+    tuk_alpha = 1.0     # alpha of tukey window, if used
+    superpos = 32       # sub windowing (superpos windows in framelen)
+    threshold = 500.    # threshold for 'high input rate'
 
     def __init__(self, data):
-        self.name = data[0]
-        self.time = data[1]
-        self.input = self.pid_in(data[2], data[3], data[4])
-        self.output = data[3]
-        self.throttle = data[5]
-        self.time_eq, self.input_eq, self.output_eq = self.equalize()
-        self.flen, self.rlen = self.stepcalc(self.time_eq)
-        self.time_resp = self.time_eq[0:self.rlen]-self.time_eq[0]
-        self.stack = self.winmaker(self.flen)               # [[time, input, output],]
-        self.tukey = self.tukeywin(self.flen, self.tuk_alpha)
-        self.spec_sm, self.avr_t, self.avr_in, self.max_in = self.stack_deconvolve(self.stack)
-        self.resp_sm, self.resp_low, self.resp_high = self.weight_response(self.spec_sm, self.avr_in, self.max_in)
+        self.name = data['name']
+        self.time, self.output = self.equalize(data['time'], data['output'])
+        self.input = self.equalize(data['time'], self.pid_in(data['input'], data['output'], data['P']))[1]
+        self.pidsum = self.equalize(data['time'],data['PIDsum'])[1]#/(self.time[1]-self.time[0])
+        self.throttle = self.equalize(data['time'],data['throttle'])[1]
+        #self.time_eq, self.input_eq, self.output_eq, self.pidsum_eq = self.equalize()
+        self.flen, self.rlen = self.stepcalc(self.time)
+        self.time_resp = self.time[0:self.rlen]-self.time[0]
+        self.stacks = self.winmaker(self.flen)               # [[time, input, output],]
+        self.window = np.hanning(self.flen)#self.tukeywin(self.flen, self.tuk_alpha)
+        self.spec_sm, self.avr_t, self.avr_in, self.max_in = self.stack_response(self.stacks)
+        self.low_mask, self.high_mask = self.low_high_mask(self.max_in, self.threshold)       #calcs masks for high and low inputs according to threshold
+        self.toolow_mask = self.low_high_mask(self.max_in, 20)[1]          #mask for ignoring noisy low input
+        self.resp_sm = self.weighted_mode_avr(self.spec_sm, self.toolow_mask, [-0.5,2.5], 600)
+        self.resp_low = self.weighted_mode_avr(self.spec_sm, self.low_mask*self.toolow_mask, [-0.5,2.5], 600)
+        if self.high_mask.sum()>0:
+            self.resp_high = self.weighted_mode_avr(self.spec_sm, self.high_mask*self.toolow_mask, [-0.5,2.5], 600)
 
+    def low_high_mask(self, signal, threshold):
+        low = np.copy(signal)
+
+        low[low <=threshold] = 1.
+        low[low > threshold] = 0.
+        high = -low+1.
+
+        if high.sum<10:     # ignore high pinput that is too short
+            high*=0.
+
+        return low, high
 
     def pid_in(self, pval, gyro, pidp):
         pidin = gyro + pval / (3. * pidp)
@@ -75,11 +89,10 @@ class Trace:
         return w
 
     ### equalizes time scale
-    def equalize(self):
-        inp_f = interp1d(self.time, self.input)
-        outp_f = interp1d(self.time, self.output)
-        newtime = np.linspace(self.time[0], self.time[-1], len(self.time))
-        return newtime, inp_f(newtime), outp_f(newtime)
+    def equalize(self, time, data):
+        data_f = interp1d(time, data)
+        newtime = np.linspace(time[0], time[-1], len(time))
+        return newtime, data_f(newtime)
 
     ### calculates frequency and resulting windowlength
     def stepcalc(self, time):
@@ -91,78 +104,88 @@ class Trace:
 
     ### makes stack of windows for deconvolution
     def winmaker(self, flen):
-        tlen = len(self.time_eq)
-        stack = []
+        tlen = len(self.time)
         shift = int(flen/Trace.superpos)
         wins = int(tlen/shift)-Trace.superpos
+        stacks={'time':[],'input':[],'output':[],'throttle':[],'pidsum':[], 'gyrodiff':[]}
         for i in np.arange(wins):
-            stack.append([self.time_eq[i * shift:i * shift + flen],
-                          self.input_eq[i * shift:i * shift + flen],
-                          self.output_eq[i * shift:i * shift + flen]])
-        return np.array(stack)
+            stacks['time'].append(self.time[i * shift:i * shift + flen])
+            stacks['input'].append(self.input[i * shift:i * shift + flen])
+            stacks['output'].append(self.output[i * shift:i * shift + flen])
+            stacks['throttle'].append(self.throttle[i * shift:i * shift + flen])
+            stacks['pidsum'].append(self.pidsum[i * shift:i * shift + flen])
+        for k in stacks.keys():
+            stacks[k]=np.array(stacks[k])
+        return stacks
 
-    def stack_deconvolve(self, stack):
-        inp = stack[:,1]* self.tukey
-        outp = stack[:,2]* self.tukey
-        pad = 8000 - len(inp[0])%8000
-        inp = np.pad(inp, [[0,0],[0,pad]], mode='constant')
-        outp = np.pad(outp, [[0, 0], [0, pad]], mode='constant')
-
-        H = np.fft.fft(inp, axis=1, norm='ortho')
-        G = np.fft.fft(outp,axis=1, norm='ortho')
+    def wiener_deconvolution(self, input, output, smooth):      # input/output are twosimensional
+        pad = len(input[0]) - 2*(len(input[0])%1024)            # padding to potence of 2, increases transform speed
+        #print 'pad:', pad, 'len:', len(inp[0])
+        input = np.pad(input, [[0,0],[0,pad]], mode='constant')
+        output = np.pad(output, [[0, 0], [0, pad]], mode='constant')
+        H = np.fft.fft(input, axis=-1, norm='ortho')
+        G = np.fft.fft(output,axis=-1, norm='ortho')
         Hcon = np.conj(H)
-        #deconvolved = np.real(np.fft.ifft(G*Hcon / (H * Hcon + 0.), norm='ortho',axis=1))[:,:self.rlen]
-        deconvolved_sm = np.real(np.fft.ifft(G * Hcon / (H * Hcon + self.smooth),axis=1))[:,:self.rlen]
+        deconvolved_sm = np.real(np.fft.ifft(G * Hcon / (H * Hcon + smooth),axis=-1))
+        return deconvolved_sm
 
+    def stack_response(self, stacks):
+        inp = stacks['input']* self.window
+        outp = stacks['output']* self.window
+        thr = stacks['throttle']* self.window
+
+        deconvolved_sm = self.wiener_deconvolution(inp, outp, self.smooth)[:,:self.rlen]
         delta_resp = deconvolved_sm.cumsum(axis=1)
 
-        avr_in = np.abs(inp).mean(axis=1)#(np.gradient(np.convolve(inp,[0.1,0.2,0.3,0.2,0.1], mode='valid'))).mean()
+        avr_in = np.abs(np.abs(inp)).mean(axis=1)#(np.gradient(np.convolve(inp,[0.1,0.2,0.3,0.2,0.1], mode='valid'))).mean()
+        #avr_thr = np.abs(thr).mean(axis=1)
         max_in = np.max(np.abs(inp),axis=1)
-        avr_t = stack[:,0].mean(axis=1)
+        avr_t = stacks['time'].mean(axis=1)
+        #plt.show()
+        #sortargs= np.argsort(avr_in)
+        #plt.figure()
+        #plt.pcolormesh(delta_resp, vmin=0,vmax=2)
+        #plt.pcolormesh(avr_in[sortargs],self.time_resp,delta_resp[sortargs].transpose(), vmin=0,vmax=2)
+        #plt.show()
 
         return delta_resp, avr_t, avr_in, max_in
+
+    ### finds the most common trace and std
+    def weighted_mode_avr(self, values, weights, vertrange, vertbins):
+        threshold = 0.5  # threshold for std calculation
+        filt_width = 7 # width of gaussian smoothing for hist data
+
+        resp_y = np.linspace(vertrange[0],vertrange[-1],vertbins)
+        times = np.repeat(np.array([self.time_resp]), len(values), axis=0)
+        weights = np.repeat(weights, len(values[0]))
+        hist2d = np.histogram2d(times.flatten(), values.flatten(),
+                                range=[[self.time_resp[0],self.time_resp[-1]], vertrange],
+                                bins=[len(times[0]), vertbins], weights=weights)[0].transpose()  # , weights=weights.flatten()
+        hist2d /= hist2d.max(0)
+        hist2d = gaussian_filter1d(hist2d, filt_width, axis=0, mode='constant')
+        hist2d /= np.max(hist2d, 0)
+
+        hist2d_sm = np.copy(hist2d)
+        pixelpos=np.repeat(resp_y.reshape(len(resp_y),1),len(times[0]),axis=1)
+        #print pixelpos
+        #avrmodes = np.argsort(hist2d, axis=0)[-avr_num:] / (vertbins/(vertrange[-1]-vertrange[0]))+vertrange[0]
+        #avrmode = np.average(avrmodes, 0)
+        avr = np.average(pixelpos, 0, weights=hist2d*hist2d*hist2d)
+
+        # only used for monochrome error width
+        hist2d[hist2d <= threshold] = 0.
+        hist2d[hist2d > threshold] = 0.5/(vertbins/(vertrange[-1]-vertrange[0]))
+
+        std = np.sum(hist2d, 0)
+
+        return avr, std, [self.time_resp,resp_y,hist2d_sm]
+
 
     ### calculates weighted avverage and resulting errors
     def weighted_avg_and_std(self, values, weights):
         average = np.average(values, axis=0, weights=weights)
         variance = np.average((values - average) ** 2, axis=0, weights=weights)
         return (average, np.sqrt(variance))
-
-    ### wheight spectrogramm by rc_in and quality
-    def weight_response(self, spec, avr_in, max_in):
-
-        high_mask = np.clip(max_in - Trace.threshold, 0., 1.)
-        low_mask = -high_mask + 1.
-        ### average response
-        resp_low = np.average(spec, axis=0, weights=avr_in*low_mask)
-
-        if np.sum(high_mask) > 10:
-            resp_high = np.average(spec, axis=0, weights=avr_in*high_mask)
-        else:
-            resp_high = np.zeros_like(resp_low)
-
-        td = spec.std(axis=0)
-        ### deviation from average per slice
-
-        fitness_low = (spec - resp_low) ** 2
-        fitness_high = (spec - resp_high) ** 2
-
-        ### wheighting new average by quality of slice response
-
-        weights_low = np.sqrt(avr_in*low_mask)**Trace.inweigh / np.sqrt(fitness_low.sum(axis=1))
-        weights_high = np.sqrt(avr_in*high_mask) ** Trace.inweigh / np.sqrt(fitness_high.sum(axis=1))
-
-        self.weights = weights_high+weights_low
-
-        spec_w, std_w = self.weighted_avg_and_std(spec, self.weights)
-        spec_low, std_low = self.weighted_avg_and_std(spec, weights_low)
-
-        if np.sum(high_mask) > 10:
-            spec_high, std_high = self.weighted_avg_and_std(spec, weights_high)
-        else:
-            spec_high, std_high = np.zeros_like(avr_in), np.zeros_like(avr_in)
-
-        return (spec_w, std_w), (spec_low, std_low), (spec_high, std_high)
 
 class CSV_log:
 
@@ -178,7 +201,7 @@ class CSV_log:
         self.roll, self.pitch, self.yaw = self.__analyze()
         self.fig = self.plot_all([self.roll, self.pitch, self.yaw])
 
-    def plot_all(self, traces):
+    def plot_all(self, traces, style='fancy'): #style='fancy' gives 2d hist for response
         fig = plt.figure(self.headdict['logNum'], figsize=(18, 9))
         for i, tr in enumerate(traces):
 
@@ -215,26 +238,62 @@ class CSV_log:
             plt.xlabel('log time in s')
             plt.xlim([tr.avr_t[0], tr.avr_t[-1]])
 
-            ax3 = plt.subplot(gs1[17:, i*10:i*10+9])
-            plt.plot(tr.time_resp, tr.resp_low[0],
-                     label=tr.name + ' step response ' + '(<' + str(int(Trace.threshold)) + ') ' + ' PID ' +
-                           self.headdict[tr.name + 'PID'])
-            plt.fill_between(tr.time_resp, tr.resp_low[0] - tr.resp_low[1], tr.resp_low[0] + tr.resp_low[1], alpha=0.1)
+            if style=='fancy':
+                theCM = plt.cm.get_cmap('Blues')
+                theCM._init()
+                alphas = np.abs(np.linspace(0., 0.5, theCM.N))
+                theCM._lut[:-3,-1] = alphas
+                ax3 = plt.subplot(gs1[17:, i*10:i*10+9])
+                plt.contourf(*tr.resp_low[2], cmap=theCM, linestyles=None, antialiased=True, levels=np.linspace(tr.resp_low[2][2].min(),tr.resp_low[2][2].max(),20))
+                #plt.pcolormesh(tr.time_resp, np.linspace(-0.5, 2.5,600), tr.resp_low[2], cmap=theCM, antialiased=True)
+                #blue_patch = mpatches.Patch(color=theCM(0.9), label=tr.name + ' step response ' + '(<' + str(int(Trace.threshold)) + ') ' + ' PID ' +
+                #                                                           self.headdict[tr.name + 'PID'])
+                #plt.legend(handles=[blue_patch])
+                plt.plot(tr.time_resp, tr.resp_low[0],
+                         label=tr.name + ' step response ' + '(<' + str(int(Trace.threshold)) + ') '
+                               + ' PID ' + self.headdict[tr.name + 'PID'])
+                #plt.fill_between(tr.time_resp, tr.resp_low[0] - tr.resp_low[1], tr.resp_low[0] + tr.resp_low[1], alpha=0.1)
 
-            if tr.resp_high[0].sum() > 10:
-                plt.plot(tr.time_resp, tr.resp_high[0],
-                         label=tr.name + ' step response ' + '(>' + str(int(Trace.threshold)) + ') ' + ' PID ' +
+
+                if tr.high_mask.sum() > 0:
+                    theCM = plt.cm.get_cmap('Oranges')
+                    theCM._init()
+                    alphas = np.abs(np.linspace(0., 0.5, theCM.N))
+                    theCM._lut[:-3,-1] = alphas
+                    plt.contourf(*tr.resp_high[2], cmap=theCM, linestyles=None, antialiased=True, levels=np.linspace(tr.resp_high[2][2].min(),tr.resp_high[2][2].max(),20))
+                    #plt.pcolormesh(tr.time_resp,np.linspace(-0.5, 2.5,600), tr.resp_high[2], cmap=theCM, antialiased=True)
+                    #orage_patch = mpatches.Patch(color=theCM(0.9), alpha=0.5, label=tr.name + ' step response ' + '(>' + str(int(Trace.threshold)) + ') ' + ' PID ' +
+                    #           self.headdict[tr.name + 'PID'])
+                    #plt.legend(handles=[blue_patch, orage_patch])
+                    plt.plot(tr.time_resp, tr.resp_high[0],
+                         label=tr.name + ' step response ' + '(<' + str(int(Trace.threshold)) + ') '
+                               + ' PID ' + self.headdict[tr.name + 'PID'])
+                    #plt.fill_between(tr.time_resp, tr.resp_high[0] - tr.resp_high[1], tr.resp_high[0] + tr.resp_high[1],
+                    #                 alpha=0.1)
+                plt.xlim([-0.001,0.501])
+
+
+            else:
+                ax3 = plt.subplot(gs1[17:, i*10:i*10+9])
+                plt.plot(tr.time_resp, tr.resp_low[0],
+                         label=tr.name + ' step response ' + '(<' + str(int(Trace.threshold)) + ') ' + ' PID ' +
                                self.headdict[tr.name + 'PID'])
-                plt.fill_between(tr.time_resp, tr.resp_high[0] - tr.resp_high[1], tr.resp_high[0] + tr.resp_high[1],
-                                 alpha=0.1)
+                plt.fill_between(tr.time_resp, tr.resp_low[0] - tr.resp_low[1], tr.resp_low[0] + tr.resp_low[1], alpha=0.1)
 
+                if tr.resp_high[0].sum() > 10:
+                    plt.plot(tr.time_resp, tr.resp_high[0],
+                             label=tr.name + ' step response ' + '(>' + str(int(Trace.threshold)) + ') ' + ' PID ' +
+                                   self.headdict[tr.name + 'PID'])
+                    plt.fill_between(tr.time_resp, tr.resp_high[0] - tr.resp_high[1], tr.resp_high[0] + tr.resp_high[1],
+                                     alpha=0.1)
+            plt.legend(loc=1)
             plt.ylim([0., 2])
             plt.ylabel('strength')
             ax3.get_yaxis().set_label_coords(-0.1, 0.5)
             plt.xlabel('response time in s')
-            plt.legend(loc=1)
+
             plt.grid()
-        meanfreq = 1./(traces[0].time_eq[1]-traces[0].time_eq[0])
+        meanfreq = 1./(traces[0].time[1]-traces[0].time[0])
         ax4 = plt.subplot(gs1[:, -1])
         t = Version+"| Betaflight: Version "+self.headdict['version']+' | Craftname: '+self.headdict['craftName']+\
             ' | meanFreq: '+str(int(meanfreq))+' | rcRate/Expo: '+self.headdict['rcRate']+'/'+ self.headdict['rcExpo']+'\nrcYawRate/Expo: '+self.headdict['rcYawRate']+'/' \
@@ -245,6 +304,7 @@ class CSV_log:
         plt.text(0.5, 0, t, ha='left', rotation=90, wrap=True, color='grey', alpha=0.5, fontsize=8)
         ax4.axis('off')
         plt.savefig(self.file[:-13] + self.name + '_' + str(self.headdict['logNum'])+'.png')
+        #plt.show()
         #plt.cla()
         #plt.clf()
         return fig
@@ -252,7 +312,7 @@ class CSV_log:
     def __analyze(self):
         analyzed = []
         for t in self.traces:
-            print t[0] + '...   ',
+            print t['name'] + '...   ',
             analyzed.append(Trace(t))
             print 'Done!'
         return analyzed
@@ -262,9 +322,12 @@ class CSV_log:
         datdic = {}
         data = read_csv(fpath, header=0, skipinitialspace=1)
         datdic.update({'time_us': data['time (us)'].values * 1e-6})
-        datdic.update({'throttle': data['rcCommand[3]'].values * 1e-6})
+        datdic.update({'throttle': data['rcCommand[3]'].values * 1e-6})         #### ???
 
+        #acc = []
         for i in ['0', '1', '2']:
+            #acc.append(data['accSmooth[' + i+']'].values)
+            datdic.update({'PID sum' + i: data['axisP[' + i+']'].values+data['axisI[' + i+']'].values+data['axisD[' + i+']'].values})
             datdic.update({'PID loop in' + i: data['axisP[' + i+']'].values})
             if 'gyroADC[0]' in data.keys():
                 datdic.update({'gyroData' + i: data['gyroADC[' + i+']'].values})
@@ -273,6 +336,24 @@ class CSV_log:
             else:
                 print 'No gyro trace found!'
 
+        #plt.figure()
+        #for a in acc:
+        #    plt.plot(a/2048.)
+        #plt.plot(data['rcCommand[3]'].values-1000.)
+        #thr =data['rcCommand[3]'].values-1000.
+        #acce=data['accSmooth[2]'].values/2048.
+        #print thr
+
+        #H = np.fft.fft(np.array(thr), norm='ortho')
+        #G = np.fft.fft(np.array(acce), norm='ortho')
+        #Hcon = np.conj(H)
+        # deconvolved = np.real(np.fft.ifft(G*Hcon / (H * Hcon + 0.), norm='ortho',axis=1))[:,:self.rlen]
+        #deconvolved_sm = np.real(np.fft.ifft(G * Hcon / (H * Hcon + 100.)))
+        #plt.figure()
+        #plt.plot(deconvolved_sm.cumsum())
+        #print deconvolved_sm
+
+        #plt.show()
         print 'Done!'
 
         return datdic
@@ -282,27 +363,21 @@ class CSV_log:
         time = self.data['time_us']
         throttle = dat['throttle']
 
-        input0 = dat['PID loop in0']
-        input1 = dat['PID loop in1']
-        input2 = dat['PID loop in2']
-
-        output0 = dat['gyroData0']
-        output1 = dat['gyroData1']
-        output2 = dat['gyroData2']
-
         throt = (throttle-0.001)*(float(self.headdict['maxThrottle'])-float(self.headdict['minThrottle']))*100.
         self.headdict.update({'tpa_percent':100.*(float(self.headdict['tpa_breakpoint'])-float(self.headdict['minThrottle']))/
                                             (float(self.headdict['maxThrottle'])-float(self.headdict['minThrottle']))})
 
+        traces = [{'name':'roll'},{'name':'pitch'},{'name':'yaw'}]
 
-        p0 = float((self.headdict['rollPID']).split(',')[0])*0.01
-        p1 = float((self.headdict['pitchPID']).split(',')[0])*0.01
-        p2 = float((self.headdict['yawPID']).split(',')[0])*0.01
+        for i, dic in enumerate(traces):
+            dic.update({'time':time})
+            dic.update({'input':dat['PID loop in'+str(i)]})
+            dic.update({'output':dat['gyroData'+str(i)]})
+            dic.update({'PIDsum':dat['PID sum'+str(i)]})
+            dic.update({'P':float((self.headdict[dic['name']+'PID']).split(',')[0])*0.01})
+            dic.update({'throttle':throt})
 
-        return [['roll', time, input0, output0, p0, throt],
-                ['pitch', time, input1, output1, p1, throt],
-                ['yaw', time, input2, output2, p2, throt]]
-
+        return traces
 
 
 class BB_log:
@@ -377,6 +452,7 @@ class BB_log:
             headsdict['tempFile'] = bblog
 
             for l in lines:
+                #print l
                 headsdict['logNum'] = str(i)
                 if 'rcRate:' in l:
                     headsdict['rcRate'] = l[9:-1]
@@ -486,7 +562,7 @@ class BB_log:
 
 def main():
     ### use here via:
-    #test = BB_log('path', 'test')
+    #test = BB_log('path/file.bbl', 'addidtional name')
     #plt.show()
 
     print Version +'\n\n'
@@ -497,8 +573,9 @@ def main():
           'Please put logfiles, Blackbox_decode.exe and this program into a single folder.\n'
 
     while True:
-        file = raw_input("Place your log here: \n-->")
-        name = raw_input('\n Name for this plot: (optional)\n')
+        file = raw_input("Place your log here: \n-->\n")
+        name = raw_input('\nName for this plot: (optional)\n')
+        #thr_mode = raw_input('\n Sort respose by throttle? (experimental) Press y!')
         test = BB_log(str(file), str(name))
         plt.show()
 
