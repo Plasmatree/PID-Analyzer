@@ -10,7 +10,7 @@ As an example:
 This was the BF 3.15 stock tune (including D Setpoint weight) on my 2.5" CS110: 
 ![stock tune](beta_stock_2.5''.png)
 
-And this a smooth tune I came up with by doing just small LOS moves in the living room: 
+And this a smooth tune I came up with by doing just small LOS moves in the living room (you can even use angle mode, the result should be the same!): 
 ![smooth tune](example_smooth_tune_0.png)
 
 The program calculates the system response from input (PID loop input = What the quad should do) and output (Gyro = The quad does). 
