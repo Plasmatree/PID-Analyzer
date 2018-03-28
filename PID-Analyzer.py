@@ -383,7 +383,8 @@ class CSV_log:
 
 
 class BB_log:
-    def __init__(self, filepath, name=''):
+    def __init__(self, filepath, name, blackbox_decode):
+        self.blackbox_decode_bin_path = blackbox_decode
         self.fpath = self.check_ends(filepath)
         self.path, self.file = os.path.split(self.fpath)
         self.name = name
@@ -552,7 +553,7 @@ class BB_log:
             size = os.path.getsize(self.path+'/'+t)
             if size>500000:
                 try:
-                    msg = os.system('blackbox_decode.exe' + ' '+t)
+                    msg = os.system(self.blackbox_decode_bin_path + ' '+t)
                     loglist.append(t)
                 except:
                     logging.error('Error in Blackbox_decode', exc_info=True)
@@ -561,29 +562,34 @@ class BB_log:
         return loglist
 
 
-
-def main():
-    ### use here via:
-    #test = BB_log('path/file.bbl', 'addidtional name')
-    #plt.show()
-
+def main(log_file_path, plot_name, blackbox_decode):
     logging.info(Version)
     logging.info('Hello Pilot!')
-    logging.info(
-          'This program uses Blackbox_decode:\n' \
-          'https://github.com/cleanflight/blackbox-tools/releases\n' \
-          'to generate .csv files from your log.\n' \
-          'Please put logfiles, Blackbox_decode.exe and this program into a single folder.\n')
 
     while True:
-        file = raw_input("Place your log here: \n-->\n")
-        name = raw_input('\nName for this plot: (optional)\n')
-        #thr_mode = raw_input('\n Sort respose by throttle? (experimental) Press y!')
-        test = BB_log(str(file), str(name))
+        test = BB_log(log_file_path, plot_name, blackbox_decode)
         plt.show()
+
 
 if __name__ == "__main__":
     logging.basicConfig(
         format='%(levelname)s %(asctime)s %(filename)s:%(lineno)s: %(message)s',
         level=logging.INFO)
-    main()
+
+    parser = argparse.ArgumentParser()
+    parser.add_argument('log', help='BBL log file to analyse.')
+    parser.add_argument('-n', '--name', help='Plot name.')
+    parser.add_argument(
+        '--blackbox_decode', default='./Blackbox_decode.exe',
+        help='Path to Blackbox_decode.exe.')
+    args = parser.parse_args()
+
+    if not os.path.isfile(args.blackbox_decode):
+        parser.error(
+            ('Could not find Blackbox_decode.exe (used to generate CSVs from '
+             'your BBL file) at %s. You may need to install it from '
+             'https://github.com/cleanflight/blackbox-tools/releases.')
+            % os.path.abspath(args.blackbox_decode))
+    logging.info('Decoding with %r', os.path.abspath(args.blackbox_decode))
+
+    main(args.log, args.name, args.blackbox_decode)
