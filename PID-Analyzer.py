@@ -19,6 +19,8 @@ from scipy.ndimage.filters import gaussian_filter1d
 
 Version = 'PID-Analyzer 0.2 '
 
+LOG_MIN_BYTES = 500000
+
 class Trace:
     framelen = 2.
     resplen = 0.5
@@ -528,30 +530,38 @@ class BB_log:
         return csvlist, csv_sizes, eventlist
 
     def decode(self, fpath):
+        """Splits out one BBL per recorded session and converts each to CSV."""
         with open(fpath, 'r') as text_log_view:
+            # The first line of the overall BBL file re-appears at the beginning
+            # of each recorded session.
             firstline = text_log_view.readlines()[0]
         with open(fpath, 'rb') as binary_log_view:
             content = binary_log_view.read()
 
-        split = content.split(str(firstline))
-        temps = []
+        split = content.split(firstline)
+        bbl_sessions = []
         for i in range(len(split)):
-            newfile=open(fpath[:-4]+'_temp'+str(i)+fpath[-4:], 'wb')
-            newfile.write(firstline+split[i])
-            temps.append(fpath[:-4]+'_temp'+str(i)+fpath[-4:])
-            newfile.close()
+            path_root, path_ext = os.path.splitext(fpath)
+            temp_path = '%s_temp%d%s' % (path_root, i, path_ext)
+            with open(temp_path, 'wb') as newfile:
+                newfile.write(firstline+split[i])
+            bbl_sessions.append(temp_path)
 
         loglist = []
-        for t in temps:
-            size = os.path.getsize(os.path.join(self.working_dir, t))
-            if size>500000:
+        for bbl_session in bbl_sessions:
+            size_bytes = os.path.getsize(os.path.join(self.working_dir, bbl_session))
+            if size_bytes > LOG_MIN_BYTES:
                 try:
-                    msg = os.system(self.blackbox_decode_bin_path + ' '+t)
-                    loglist.append(t)
+                    msg = os.system(self.blackbox_decode_bin_path + ' '+bbl_session)
+                    loglist.append(bbl_session)
                 except:
-                    logging.error('Error in Blackbox_decode', exc_info=True)
+                    logging.error('Error in Blackbox_decode of %r' % bbl_session)
             else:
-                os.remove(t)
+                # There is often a small bogus session at the start of the file.
+                logging.warning(
+                    'Ignoring BBL session %r, %dB < %dB.'
+                    % (bbl_session, size_bytes, LOG_MIN_BYTES))
+                os.remove(bbl_session)
         return loglist
 
 
