@@ -125,7 +125,11 @@ class Trace:
 
     def wiener_deconvolution(self, input, output, smooth):      # input/output are twosimensional
         pad = len(input[0]) - 2*(len(input[0])%1024)            # padding to potence of 2, increases transform speed
-        #print 'pad:', pad, 'len:', len(inp[0])
+        if pad < 0:
+            logging.warning(
+                'Clamping padding value %d < 0 from length %d to 0.'
+                % (pad, len(input[0])))
+            pad = 0
         input = np.pad(input, [[0,0],[0,pad]], mode='constant')
         output = np.pad(output, [[0, 0], [0, pad]], mode='constant')
         H = np.fft.fft(input, axis=-1, norm='ortho')
