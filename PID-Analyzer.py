@@ -386,8 +386,7 @@ class CSV_log:
 class BB_log:
     def __init__(self, filepath, name, blackbox_decode):
         self.blackbox_decode_bin_path = blackbox_decode
-        self.fpath = self.check_ends(filepath)
-        self.path, self.file = os.path.split(self.fpath)
+        self.path, self.file = os.path.split(filepath)
         self.name = name
 
         #self.maketemp(self.path)
@@ -396,13 +395,6 @@ class BB_log:
         self.figs = self._csv_iter(self.heads)
 
         self.deletejunk(self.loglist)
-
-    def check_ends(self, filepath):
-        filepath = str(filepath)
-        if filepath[-1]=='"' or filepath[-1]=="'":
-            return filepath[1:-1]
-        else:
-            return filepath
 
     def maketemp(self, path):
         os.mkdir(path+'/tmp')
@@ -572,6 +564,14 @@ def main(log_file_path, plot_name, blackbox_decode):
         plt.show()
 
 
+def strip_quotes(filepath):
+    """Strips single or double quotes from a string."""
+    if filepath[-1]=='"' or filepath[-1]=="'":
+        return filepath[1:-1]
+    else:
+        return filepath
+
+
 if __name__ == "__main__":
     logging.basicConfig(
         format='%(levelname)s %(asctime)s %(filename)s:%(lineno)s: %(message)s',
@@ -593,4 +593,4 @@ if __name__ == "__main__":
             % os.path.abspath(args.blackbox_decode))
     logging.info('Decoding with %r', os.path.abspath(args.blackbox_decode))
 
-    main(args.log, args.name, args.blackbox_decode)
+    main(strip_quotes(args.log), args.name, args.blackbox_decode)
