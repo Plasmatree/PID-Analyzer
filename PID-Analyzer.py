@@ -388,19 +388,16 @@ class CSV_log:
 class BB_log:
     def __init__(self, log_file_path, name, blackbox_decode):
         self.blackbox_decode_bin_path = blackbox_decode
-        self.working_dir = os.path.join(os.path.dirname(log_file_path), name)
+        self.tmp_dir = os.path.join(os.path.dirname(log_file_path), name or 'tmp')
+        if not os.path.isdir(self.tmp_dir):
+            os.makedirs(self.tmp_dir)
         self.name = name
 
-        #self.maketemp(self.working_dir)
         self.loglist = self.decode(log_file_path)
         self.heads = self.beheader(self.loglist)
         self.figs = self._csv_iter(self.heads)
 
         self.deletejunk(self.loglist)
-
-    def maketemp(self, path):
-        os.mkdir(path+'/tmp')
-
 
     def deletejunk(self, loglist):
         for l in loglist:
@@ -421,7 +418,7 @@ class BB_log:
     def beheader(self, loglist):
         heads = []
         for i, bblog in enumerate(loglist):
-            log = open(os.path.join(self.working_dir, bblog), 'r')
+            log = open(os.path.join(self.tmp_dir, bblog), 'r')
             lines = log.readlines()
 
             headsdict = {'tempFile'     :'',
@@ -523,15 +520,16 @@ class BB_log:
         split = content.split(firstline)
         bbl_sessions = []
         for i in range(len(split)):
-            path_root, path_ext = os.path.splitext(fpath)
-            temp_path = '%s_temp%d%s' % (path_root, i, path_ext)
+            path_root, path_ext = os.path.splitext(os.path.basename(fpath))
+            temp_path = os.path.join(
+                self.tmp_dir, '%s_temp%d%s' % (path_root, i, path_ext))
             with open(temp_path, 'wb') as newfile:
                 newfile.write(firstline+split[i])
             bbl_sessions.append(temp_path)
 
         loglist = []
         for bbl_session in bbl_sessions:
-            size_bytes = os.path.getsize(os.path.join(self.working_dir, bbl_session))
+            size_bytes = os.path.getsize(os.path.join(self.tmp_dir, bbl_session))
             if size_bytes > LOG_MIN_BYTES:
                 try:
                     msg = os.system(self.blackbox_decode_bin_path + ' '+bbl_session)
