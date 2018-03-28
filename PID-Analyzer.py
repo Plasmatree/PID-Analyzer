@@ -511,24 +511,6 @@ class BB_log:
             heads.append(headsdict)
         return heads
 
-    def logfinder(self, fpath):
-        path, file = os.path.split(fpath)
-        name = file[:-3]
-        flist = os.listdir(path)
-        csvlist =   []
-        csv_sizes = []
-        eventlist =  []
-
-        for i in range(1, 99):
-            csvname = name+'_temp'+str(i)+'.01.csv'
-            eventname = name+'_temp'+str(i)+'.01.event'
-            if csvname not in flist: break
-            csvlist.append(csvname)
-            eventlist.append(eventname)
-        for csv in csvlist:
-            csv_sizes.append(os.path.getsize(path+'/'+csv))
-        return csvlist, csv_sizes, eventlist
-
     def decode(self, fpath):
         """Splits out one BBL per recorded session and converts each to CSV."""
         with open(fpath, 'r') as text_log_view:
