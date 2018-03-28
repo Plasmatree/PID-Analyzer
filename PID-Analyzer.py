@@ -384,13 +384,13 @@ class CSV_log:
 
 
 class BB_log:
-    def __init__(self, filepath, name, blackbox_decode):
+    def __init__(self, log_file_path, name, blackbox_decode):
         self.blackbox_decode_bin_path = blackbox_decode
-        self.path, self.file = os.path.split(filepath)
+        self.working_dir = os.path.join(os.path.dirname(log_file_path), name)
         self.name = name
 
-        #self.maketemp(self.path)
-        self.loglist = self.decode(self.file)
+        #self.maketemp(self.working_dir)
+        self.loglist = self.decode(log_file_path)
         self.heads = self.beheader(self.loglist)
         self.figs = self._csv_iter(self.heads)
 
@@ -419,7 +419,7 @@ class BB_log:
     def beheader(self, loglist):
         heads = []
         for i, bblog in enumerate(loglist):
-            log = open(self.path+'/'+bblog, 'r')
+            log = open(os.path.join(self.working_dir, bblog), 'r')
             lines = log.readlines()
 
             headsdict = {'tempFile'     :'',
@@ -528,10 +528,10 @@ class BB_log:
         return csvlist, csv_sizes, eventlist
 
     def decode(self, fpath):
-        log = open(fpath, 'rb')
-        log2 = open(fpath, 'r')
-        firstline = log2.readlines()[0]
-        content = log.read()
+        with open(fpath, 'r') as text_log_view:
+            firstline = text_log_view.readlines()[0]
+        with open(fpath, 'rb') as binary_log_view:
+            content = binary_log_view.read()
 
         split = content.split(str(firstline))
         temps = []
@@ -543,7 +543,7 @@ class BB_log:
 
         loglist = []
         for t in temps:
-            size = os.path.getsize(self.path+'/'+t)
+            size = os.path.getsize(os.path.join(self.working_dir, t))
             if size>500000:
                 try:
                     msg = os.system(self.blackbox_decode_bin_path + ' '+t)
@@ -579,7 +579,7 @@ if __name__ == "__main__":
 
     parser = argparse.ArgumentParser()
     parser.add_argument('log', help='BBL log file to analyse.')
-    parser.add_argument('-n', '--name', help='Plot name.')
+    parser.add_argument('-n', '--name', default='', help='Plot name.')
     parser.add_argument(
         '--blackbox_decode', default='./Blackbox_decode.exe',
         help='Path to Blackbox_decode.exe.')
