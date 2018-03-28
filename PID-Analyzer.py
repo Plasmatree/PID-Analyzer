@@ -310,7 +310,7 @@ class CSV_log:
             +' | Throttle min/tpa/max: ' + self.headdict['minThrottle']+'/'+self.headdict['tpa_breakpoint']+'/'+self.headdict['maxThrottle'] \
             + ' | dynThrPID: ' + self.headdict['dynThrottle']+ '| D-TermSP: ' + self.headdict['dTermSetPoint']+'| vbatComp: ' + self.headdict['vbatComp']
 
-        plt.text(0.5, 0, t, ha='left', rotation=90, wrap=True, color='grey', alpha=0.5, fontsize=8)
+        plt.text(0.5, 0, t, ha='left', rotation=90, color='grey', alpha=0.5, fontsize=8)
         ax4.axis('off')
         plt.savefig(self.file[:-13] + self.name + '_' + str(self.headdict['logNum'])+'.png')
         #plt.show()
@@ -553,9 +553,9 @@ def main(log_file_path, plot_name, blackbox_decode):
     logging.info(Version)
     logging.info('Hello Pilot!')
 
-    while True:
-        test = BB_log(log_file_path, plot_name, blackbox_decode)
-        plt.show()
+    test = BB_log(log_file_path, plot_name, blackbox_decode)
+    logging.info('Analysis complete, showing plot. (Close plot to exit.)')
+    plt.show()
 
 
 def strip_quotes(filepath):
