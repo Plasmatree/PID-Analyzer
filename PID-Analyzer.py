@@ -517,7 +517,7 @@ class BB_log:
         csv_sizes = []
         eventlist =  []
 
-        for i in range(1, 99, 1):
+        for i in range(1, 99):
             csvname = name+'_temp'+str(i)+'.01.csv'
             eventname = name+'_temp'+str(i)+'.01.event'
             if csvname not in flist: break
