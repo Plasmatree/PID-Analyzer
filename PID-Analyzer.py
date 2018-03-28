@@ -1,3 +1,5 @@
+import argparse
+import logging
 import os
 import numpy as np
 from pandas import read_csv
@@ -196,7 +198,7 @@ class CSV_log:
 
         self.data = self.readcsv(self.file)
 
-        print 'Processing:'
+        logging.info('Processing:')
         self.traces = self.find_traces(self.data)
         self.roll, self.pitch, self.yaw = self.__analyze()
         self.fig = self.plot_all([self.roll, self.pitch, self.yaw])
@@ -312,13 +314,13 @@ class CSV_log:
     def __analyze(self):
         analyzed = []
         for t in self.traces:
-            print t['name'] + '...   ',
+            logging.info(t['name'] + '...   ')
             analyzed.append(Trace(t))
-            print 'Done!'
+            logging.info('\tDone!')
         return analyzed
 
     def readcsv(self, fpath):
-        print 'Reading log '+str(self.headdict['logNum'][0])+'...   ',
+        logging.info('Reading log '+str(self.headdict['logNum'][0])+'...   ')
         datdic = {}
         data = read_csv(fpath, header=0, skipinitialspace=1)
         datdic.update({'time_us': data['time (us)'].values * 1e-6})
@@ -334,7 +336,7 @@ class CSV_log:
             elif 'gyroData[0]' in data.keys():
                 datdic.update({'gyroData' + i: data['gyroData[' + i+']'].values})
             else:
-                print 'No gyro trace found!'
+                logging.warning('No gyro trace found!')
 
         #plt.figure()
         #for a in acc:
@@ -354,7 +356,7 @@ class CSV_log:
         #print deconvolved_sm
 
         #plt.show()
-        print 'Done!'
+        logging.info('\tDone!')
 
         return datdic
 
@@ -411,7 +413,7 @@ class BB_log:
             try:
                 os.remove(l[:-3]+'01.event')
             except:
-                print 'No .event file of '+l+' found.'
+                logging.warning('No .event file of '+l+' found.')
         return
 
     def _csv_iter(self, heads):
@@ -553,7 +555,7 @@ class BB_log:
                     msg = os.system('blackbox_decode.exe' + ' '+t)
                     loglist.append(t)
                 except:
-                    print 'Error in Blackbox_decode'
+                    logging.error('Error in Blackbox_decode', exc_info=True)
             else:
                 os.remove(t)
         return loglist
@@ -565,12 +567,13 @@ def main():
     #test = BB_log('path/file.bbl', 'addidtional name')
     #plt.show()
 
-    print Version +'\n\n'
-    print 'Hello Pilot!'
-    print 'This program uses Blackbox_decode:\n' \
+    logging.info(Version)
+    logging.info('Hello Pilot!')
+    logging.info(
+          'This program uses Blackbox_decode:\n' \
           'https://github.com/cleanflight/blackbox-tools/releases\n' \
           'to generate .csv files from your log.\n' \
-          'Please put logfiles, Blackbox_decode.exe and this program into a single folder.\n'
+          'Please put logfiles, Blackbox_decode.exe and this program into a single folder.\n')
 
     while True:
         file = raw_input("Place your log here: \n-->\n")
@@ -580,4 +583,7 @@ def main():
         plt.show()
 
 if __name__ == "__main__":
+    logging.basicConfig(
+        format='%(levelname)s %(asctime)s %(filename)s:%(lineno)s: %(message)s',
+        level=logging.INFO)
     main()
