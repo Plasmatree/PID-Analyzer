@@ -579,12 +579,16 @@ if __name__ == "__main__":
         help='Path to Blackbox_decode.exe.')
     args = parser.parse_args()
 
-    if not os.path.isfile(args.blackbox_decode):
+    blackbox_decode_path = os.path.abspath(os.path.expanduser(args.blackbox_decode))
+    if not os.path.isfile(blackbox_decode_path):
         parser.error(
             ('Could not find Blackbox_decode.exe (used to generate CSVs from '
              'your BBL file) at %s. You may need to install it from '
              'https://github.com/cleanflight/blackbox-tools/releases.')
-            % os.path.abspath(args.blackbox_decode))
-    logging.info('Decoding with %r', os.path.abspath(args.blackbox_decode))
+            % blackbox_decode_path)
+    logging.info('Decoding with %r' % blackbox_decode_path)
 
-    main(strip_quotes(args.log), args.name, args.blackbox_decode)
+    main(
+        os.path.abspath(os.path.expanduser(strip_quotes(args.log))),
+        args.name,
+        args.blackbox_decode)
