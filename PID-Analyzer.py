@@ -2,6 +2,7 @@
 import argparse
 import logging
 import os
+import subprocess
 import numpy as np
 from pandas import read_csv
 import matplotlib.pyplot as plt
@@ -531,10 +532,11 @@ class BB_log:
             size_bytes = os.path.getsize(os.path.join(self.tmp_dir, bbl_session))
             if size_bytes > LOG_MIN_BYTES:
                 try:
-                    msg = os.system(self.blackbox_decode_bin_path + ' '+bbl_session)
+                    msg = subprocess.check_call([self.blackbox_decode_bin_path, bbl_session])
                     loglist.append(bbl_session)
                 except:
-                    logging.error('Error in Blackbox_decode of %r' % bbl_session)
+                    logging.error(
+                        'Error in Blackbox_decode of %r' % bbl_session, exc_info=True)
             else:
                 # There is often a small bogus session at the start of the file.
                 logging.warning(
