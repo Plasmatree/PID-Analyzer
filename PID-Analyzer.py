@@ -570,7 +570,8 @@ if __name__ == "__main__":
     parser.add_argument('log', help='BBL log file to analyse.')
     parser.add_argument('-n', '--name', default='', help='Plot name.')
     parser.add_argument(
-        '--blackbox_decode', default='./Blackbox_decode.exe',
+        '--blackbox_decode',
+        default=os.path.join(os.getcwd(), 'Blackbox_decode.exe'),
         help='Path to Blackbox_decode.exe.')
     args = parser.parse_args()
 
