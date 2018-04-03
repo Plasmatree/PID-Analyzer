@@ -123,13 +123,8 @@ class Trace:
             stacks[k]=np.array(stacks[k])
         return stacks
 
-    def wiener_deconvolution(self, input, output, smooth):      # input/output are twosimensional
-        pad = len(input[0]) - 2*(len(input[0])%1024)            # padding to potence of 2, increases transform speed
-        if pad < 0:
-            logging.warning(
-                'Clamping padding value %d < 0 from length %d to 0.'
-                % (pad, len(input[0])))
-            pad = 0
+    def wiener_deconvolution(self, input, output, smooth):      # input/output are two-dimensional
+        pad = len(input[0]) + (1024 - (len(input[0]) % 1024))   # padding to power of 2, increases transform speed
         input = np.pad(input, [[0,0],[0,pad]], mode='constant')
         output = np.pad(output, [[0, 0], [0, pad]], mode='constant')
         H = np.fft.fft(input, axis=-1, norm='ortho')
