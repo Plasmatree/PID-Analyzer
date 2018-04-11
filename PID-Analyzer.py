@@ -389,7 +389,7 @@ class CSV_log:
 class BB_log:
     def __init__(self, log_file_path, name, blackbox_decode):
         self.blackbox_decode_bin_path = blackbox_decode
-        self.tmp_dir = os.path.join(os.path.dirname(log_file_path), name or 'tmp')
+        self.tmp_dir = os.path.join(os.path.dirname(log_file_path), name)
         if not os.path.isdir(self.tmp_dir):
             os.makedirs(self.tmp_dir)
         self.name = name
@@ -562,11 +562,8 @@ def run_analysis(log_file_path, plot_name, blackbox_decode):
 
 
 def strip_quotes(filepath):
-    """Strips single or double quotes from a string."""
-    if filepath[-1]=='"' or filepath[-1]=="'":
-        return filepath[1:-1]
-    else:
-        return filepath
+    """Strips single or double quotes and extra whitespace from a string."""
+    return filepath.strip().strip("'").strip('"')
 
 
 def clean_path(path):
@@ -582,7 +579,7 @@ if __name__ == "__main__":
     parser.add_argument(
         '-l', '--log', action='append',
         help='BBL log file(s) to analyse. Omit for interactive prompt.')
-    parser.add_argument('-n', '--name', default='', help='Plot name.')
+    parser.add_argument('-n', '--name', default='tmp', help='Plot name.')
     parser.add_argument(
         '--blackbox_decode',
         default=os.path.join(os.getcwd(), 'Blackbox_decode.exe'),
