@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/usr/bin/env python
 import argparse
 import logging
 import os
@@ -49,15 +49,16 @@ class Trace:
         if self.high_mask.sum()>0:
             self.resp_high = self.weighted_mode_avr(self.spec_sm, self.high_mask*self.toolow_mask, [-0.5,2.5], 600)
 
-    def low_high_mask(self, signal, threshold):
+    @staticmethod
+    def low_high_mask(signal, threshold):
         low = np.copy(signal)
 
         low[low <=threshold] = 1.
         low[low > threshold] = 0.
         high = -low+1.
 
-        if high.sum<10:     # ignore high pinput that is too short
-            high*=0.
+        if high.sum() < 10:     # ignore high pinput that is too short
+            high *= 0.
 
         return low, high
 
@@ -418,7 +419,7 @@ class BB_log:
     def beheader(self, loglist):
         heads = []
         for i, bblog in enumerate(loglist):
-            log = open(os.path.join(self.tmp_dir, bblog), 'r')
+            log = open(os.path.join(self.tmp_dir, bblog), 'rb')
             lines = log.readlines()
 
             headsdict = {'tempFile'     :'',
@@ -446,7 +447,8 @@ class BB_log:
 
             headsdict['tempFile'] = bblog
 
-            for l in lines:
+            for raw_line in lines:
+                l = raw_line.decode('latin-1')
                 #print l
                 headsdict['logNum'] = str(i)
                 if 'rcRate:' in l:
@@ -510,12 +512,19 @@ class BB_log:
 
     def decode(self, fpath):
         """Splits out one BBL per recorded session and converts each to CSV."""
-        with open(fpath, 'r') as text_log_view:
-            # The first line of the overall BBL file re-appears at the beginning
-            # of each recorded session.
-            firstline = text_log_view.readlines()[0]
         with open(fpath, 'rb') as binary_log_view:
             content = binary_log_view.read()
+
+        # The first line of the overall BBL file re-appears at the beginning
+        # of each recorded session.
+        try:
+          first_newline_index = content.index(bytes('\n', 'utf8'))
+        except ValueError as e:
+            raise ValueError(
+                'No newline in %dB of log data from %r.'
+                % (len(content), fpath),
+                e)
+        firstline = content[:first_newline_index + 1]
 
         split = content.split(firstline)
         bbl_sessions = []
