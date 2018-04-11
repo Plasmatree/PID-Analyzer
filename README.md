@@ -29,6 +29,15 @@ This is the reason why the throttle and TPA threshold is additionally plotted.
 
 The whole thing is still under development and results/input of different and more experienced pilots will be appreciated!
 
+## Requirements
+
+To install required Python libraries, view the list of packages in `requirements.txt` or simply run:
+
+```
+sudo apt-get install python3-pip python3-tk
+sudo pip3 install -r requirements.txt
+```
+
 ## How to use this program:
 1. Record your log. Logs of 20s seem to give sufficient statistics. If it's slightly windy, longer logs can still give reasonable results. You can record multiple logs in one session: Each entry will yield a seperate plot.
 2. Place your logfiles, `blackbox_decode.exe` ([Windows download](https://github.com/cleanflight/blackbox-tools/releases/download/v0.4.3/blackbox-tools-0.4.3-windows.zip)) and `PID-Analyzer.exe` ([Windows download](http://bit.ly/PID-Analyzer)) in the same folder. You can also specify where to find these executables via command-line flags.
