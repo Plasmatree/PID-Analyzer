@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/env python3
 import argparse
 import logging
 import os
@@ -546,10 +546,7 @@ class BB_log:
         return loglist
 
 
-def main(log_file_path, plot_name, blackbox_decode):
-    logging.info(Version)
-    logging.info('Hello Pilot!')
-
+def run_analysis(log_file_path, plot_name, blackbox_decode):
     test = BB_log(log_file_path, plot_name, blackbox_decode)
     logging.info('Analysis complete, showing plot. (Close plot to exit.)')
     plt.show()
@@ -563,13 +560,19 @@ def strip_quotes(filepath):
         return filepath
 
 
+def clean_path(path):
+    return os.path.abspath(os.path.expanduser(strip_quotes(path)))
+
+
 if __name__ == "__main__":
     logging.basicConfig(
         format='%(levelname)s %(asctime)s %(filename)s:%(lineno)s: %(message)s',
         level=logging.INFO)
 
     parser = argparse.ArgumentParser()
-    parser.add_argument('log', help='BBL log file to analyse.')
+    parser.add_argument(
+        '-l', '--log', action='append',
+        help='BBL log file(s) to analyse. Omit for interactive prompt.')
     parser.add_argument('-n', '--name', default='', help='Plot name.')
     parser.add_argument(
         '--blackbox_decode',
@@ -577,7 +580,7 @@ if __name__ == "__main__":
         help='Path to Blackbox_decode.exe.')
     args = parser.parse_args()
 
-    blackbox_decode_path = os.path.abspath(os.path.expanduser(args.blackbox_decode))
+    blackbox_decode_path = clean_path(args.blackbox_decode)
     if not os.path.isfile(blackbox_decode_path):
         parser.error(
             ('Could not find Blackbox_decode.exe (used to generate CSVs from '
@@ -586,7 +589,19 @@ if __name__ == "__main__":
             % blackbox_decode_path)
     logging.info('Decoding with %r' % blackbox_decode_path)
 
-    main(
-        os.path.abspath(os.path.expanduser(strip_quotes(args.log))),
-        args.name,
-        args.blackbox_decode)
+    logging.info(Version)
+    logging.info('Hello Pilot!')
+
+    if args.log:
+        for log_path in args.log:
+            run_analysis(clean_path(log_path), args.name, args.blackbox_decode)
+    else:
+        while True:
+            logging.info('Interactive mode: enter log file, or type ^C (control-C) when done.')
+            try:
+                raw_path = input('BBL log file path (type or drag in): ')
+                name = input('Plot name [default = %r]: ' % args.name) or args.name
+            except (EOFError, KeyboardInterrupt):
+                logging.info('Goodbye!')
+                break
+            run_analysis(clean_path(raw_path), name, args.blackbox_decode)
