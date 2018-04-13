@@ -3,6 +3,7 @@ import argparse
 import logging
 import os
 import subprocess
+import time
 import numpy as np
 from pandas import read_csv
 import matplotlib.pyplot as plt
@@ -18,16 +19,16 @@ from scipy.ndimage.filters import gaussian_filter1d
 #
 #
 
-Version = 'PID-Analyzer 0.2 '
+Version = 'PID-Analyzer 0.30 '
 
 LOG_MIN_BYTES = 500000
 
 class Trace:
     framelen = 2.
     resplen = 0.5
-    smooth = 1.         #
+    smooth = 0.2         #
     tuk_alpha = 1.0     # alpha of tukey window, if used
-    superpos = 32       # sub windowing (superpos windows in framelen)
+    superpos = 16       # sub windowing (superpos windows in framelen)
     threshold = 500.    # threshold for 'high input rate'
 
     def __init__(self, data):
@@ -44,10 +45,10 @@ class Trace:
         self.spec_sm, self.avr_t, self.avr_in, self.max_in = self.stack_response(self.stacks)
         self.low_mask, self.high_mask = self.low_high_mask(self.max_in, self.threshold)       #calcs masks for high and low inputs according to threshold
         self.toolow_mask = self.low_high_mask(self.max_in, 20)[1]          #mask for ignoring noisy low input
-        self.resp_sm = self.weighted_mode_avr(self.spec_sm, self.toolow_mask, [-0.5,2.5], 600)
-        self.resp_low = self.weighted_mode_avr(self.spec_sm, self.low_mask*self.toolow_mask, [-0.5,2.5], 600)
+        self.resp_sm = self.weighted_mode_avr(self.spec_sm, self.toolow_mask, [-1.5,3.5], 1000)
+        self.resp_low = self.weighted_mode_avr(self.spec_sm, self.low_mask*self.toolow_mask, [-1.5,3.5], 1000)
         if self.high_mask.sum()>0:
-            self.resp_high = self.weighted_mode_avr(self.spec_sm, self.high_mask*self.toolow_mask, [-0.5,2.5], 600)
+            self.resp_high = self.weighted_mode_avr(self.spec_sm, self.high_mask*self.toolow_mask, [-1.5,3.5], 1000)
 
     @staticmethod
     def low_high_mask(signal, threshold):
@@ -126,7 +127,7 @@ class Trace:
         return stacks
 
     def wiener_deconvolution(self, input, output, smooth):      # input/output are two-dimensional
-        pad = len(input[0]) + (1024 - (len(input[0]) % 1024))   # padding to power of 2, increases transform speed
+        pad = 1024 - (len(input[0]) % 1024)                     # padding to power of 2, increases transform speed
         input = np.pad(input, [[0,0],[0,pad]], mode='constant')
         output = np.pad(output, [[0, 0], [0, pad]], mode='constant')
         H = np.fft.fft(input, axis=-1, norm='ortho')
@@ -136,56 +137,50 @@ class Trace:
         return deconvolved_sm
 
     def stack_response(self, stacks):
-        inp = stacks['input']* self.window
-        outp = stacks['output']* self.window
-        thr = stacks['throttle']* self.window
+        inp = stacks['input'] * self.window
+        outp = stacks['output'] * self.window
+        thr = stacks['throttle'] * self.window
 
-        deconvolved_sm = self.wiener_deconvolution(inp, outp, self.smooth)[:,:self.rlen]
+        deconvolved_sm = self.wiener_deconvolution(inp, outp, self.smooth)[:, :self.rlen]
         delta_resp = deconvolved_sm.cumsum(axis=1)
+        delta_resp -= delta_resp[:, 0].repeat(len(delta_resp[0])).reshape(np.shape(delta_resp))
+        # itegration leaves constant offset undefined. we know that the first point has to be 0
+        # offset might be also caused by noise or wieer-smoothing (related to s/n)
 
-        avr_in = np.abs(np.abs(inp)).mean(axis=1)#(np.gradient(np.convolve(inp,[0.1,0.2,0.3,0.2,0.1], mode='valid'))).mean()
-        #avr_thr = np.abs(thr).mean(axis=1)
-        max_in = np.max(np.abs(inp),axis=1)
+        avr_in = np.abs(np.abs(inp)).mean(axis=1)  # (np.gradient(np.convolve(inp,[0.1,0.2,0.3,0.2,0.1], mode='valid'))).mean()
+        # avr_thr = np.abs(thr).mean(axis=1)
+        max_in = np.max(np.abs(inp), axis=1)
         avr_t = stacks['time'].mean(axis=1)
-        #plt.show()
-        #sortargs= np.argsort(avr_in)
-        #plt.figure()
-        #plt.pcolormesh(delta_resp, vmin=0,vmax=2)
-        #plt.pcolormesh(avr_in[sortargs],self.time_resp,delta_resp[sortargs].transpose(), vmin=0,vmax=2)
-        #plt.show()
 
         return delta_resp, avr_t, avr_in, max_in
 
     ### finds the most common trace and std
     def weighted_mode_avr(self, values, weights, vertrange, vertbins):
         threshold = 0.5  # threshold for std calculation
-        filt_width = 7 # width of gaussian smoothing for hist data
+        filt_width = 7  # width of gaussian smoothing for hist data
 
-        resp_y = np.linspace(vertrange[0],vertrange[-1],vertbins)
+        resp_y = np.linspace(vertrange[0], vertrange[-1], vertbins)
         times = np.repeat(np.array([self.time_resp]), len(values), axis=0)
         weights = np.repeat(weights, len(values[0]))
         hist2d = np.histogram2d(times.flatten(), values.flatten(),
-                                range=[[self.time_resp[0],self.time_resp[-1]], vertrange],
-                                bins=[len(times[0]), vertbins], weights=weights)[0].transpose()  # , weights=weights.flatten()
-        hist2d /= hist2d.max(0)
-        hist2d = gaussian_filter1d(hist2d, filt_width, axis=0, mode='constant')
-        hist2d /= np.max(hist2d, 0)
+                                range=[[self.time_resp[0], self.time_resp[-1]], vertrange],
+                                bins=[len(times[0]), vertbins], weights=weights)[0].transpose()
+        if hist2d.sum():
+            hist2d_sm = gaussian_filter1d(hist2d, filt_width, axis=0, mode='constant')
+            hist2d_sm /= np.max(hist2d_sm, 0)
 
-        hist2d_sm = np.copy(hist2d)
-        pixelpos=np.repeat(resp_y.reshape(len(resp_y),1),len(times[0]),axis=1)
-        #print pixelpos
-        #avrmodes = np.argsort(hist2d, axis=0)[-avr_num:] / (vertbins/(vertrange[-1]-vertrange[0]))+vertrange[0]
-        #avrmode = np.average(avrmodes, 0)
-        avr = np.average(pixelpos, 0, weights=hist2d*hist2d*hist2d)
-
+            pixelpos = np.repeat(resp_y.reshape(len(resp_y), 1), len(times[0]), axis=1)
+            avr = np.average(pixelpos, 0, weights=hist2d_sm * hist2d_sm)
+        else:
+            hist2d_sm = hist2d
+            avr = np.zeros_like(self.time_resp)
         # only used for monochrome error width
         hist2d[hist2d <= threshold] = 0.
-        hist2d[hist2d > threshold] = 0.5/(vertbins/(vertrange[-1]-vertrange[0]))
+        hist2d[hist2d > threshold] = 0.5 / (vertbins / (vertrange[-1] - vertrange[0]))
 
         std = np.sum(hist2d, 0)
 
-        return avr, std, [self.time_resp,resp_y,hist2d_sm]
-
+        return avr, std, [self.time_resp, resp_y, hist2d_sm]
 
     ### calculates weighted avverage and resulting errors
     def weighted_avg_and_std(self, values, weights):
@@ -208,12 +203,11 @@ class CSV_log:
         self.fig = self.plot_all([self.roll, self.pitch, self.yaw])
 
     def plot_all(self, traces, style='fancy'): #style='fancy' gives 2d hist for response
-        fig = plt.figure(self.headdict['logNum'], figsize=(18, 9))
+        fig = plt.figure('Log number: ' + self.headdict['logNum']+'          '+self.file , figsize=(18, 9))
+        ### gridspec devides window into 24 horizontal, 3*10 vertical fields
+        gs1 = GridSpec(24, 3 * 10, wspace=0.6, hspace=0.7, left=0.04, right=1., bottom=0.05, top=0.97)
+
         for i, tr in enumerate(traces):
-
-            gs1 = GridSpec(24, 3*10, wspace=0.6, hspace=0.7, left=0.04, right=1., bottom=0.05, top=0.97)
-            #gs1.update(left=float(i)/3., right=(i+1.)/3., wspace=0.0)
-
             ax0 = plt.subplot(gs1[0:7, i*10:i*10+9])
             plt.title(tr.name)
             plt.plot(tr.time, tr.output, label=tr.name + ' gyro')
@@ -250,15 +244,10 @@ class CSV_log:
                 alphas = np.abs(np.linspace(0., 0.5, theCM.N))
                 theCM._lut[:-3,-1] = alphas
                 ax3 = plt.subplot(gs1[17:, i*10:i*10+9])
-                plt.contourf(*tr.resp_low[2], cmap=theCM, linestyles=None, antialiased=True, levels=np.linspace(tr.resp_low[2][2].min(),tr.resp_low[2][2].max(),20))
-                #plt.pcolormesh(tr.time_resp, np.linspace(-0.5, 2.5,600), tr.resp_low[2], cmap=theCM, antialiased=True)
-                #blue_patch = mpatches.Patch(color=theCM(0.9), label=tr.name + ' step response ' + '(<' + str(int(Trace.threshold)) + ') ' + ' PID ' +
-                #                                                           self.headdict[tr.name + 'PID'])
-                #plt.legend(handles=[blue_patch])
+                plt.contourf(*tr.resp_low[2], cmap=theCM, linestyles=None, antialiased=True, levels=np.linspace(0,1,20))
                 plt.plot(tr.time_resp, tr.resp_low[0],
                          label=tr.name + ' step response ' + '(<' + str(int(Trace.threshold)) + ') '
                                + ' PID ' + self.headdict[tr.name + 'PID'])
-                #plt.fill_between(tr.time_resp, tr.resp_low[0] - tr.resp_low[1], tr.resp_low[0] + tr.resp_low[1], alpha=0.1)
 
 
                 if tr.high_mask.sum() > 0:
@@ -266,16 +255,10 @@ class CSV_log:
                     theCM._init()
                     alphas = np.abs(np.linspace(0., 0.5, theCM.N))
                     theCM._lut[:-3,-1] = alphas
-                    plt.contourf(*tr.resp_high[2], cmap=theCM, linestyles=None, antialiased=True, levels=np.linspace(tr.resp_high[2][2].min(),tr.resp_high[2][2].max(),20))
-                    #plt.pcolormesh(tr.time_resp,np.linspace(-0.5, 2.5,600), tr.resp_high[2], cmap=theCM, antialiased=True)
-                    #orage_patch = mpatches.Patch(color=theCM(0.9), alpha=0.5, label=tr.name + ' step response ' + '(>' + str(int(Trace.threshold)) + ') ' + ' PID ' +
-                    #           self.headdict[tr.name + 'PID'])
-                    #plt.legend(handles=[blue_patch, orage_patch])
+                    plt.contourf(*tr.resp_high[2], cmap=theCM, linestyles=None, antialiased=True, levels=np.linspace(0,1,20))
                     plt.plot(tr.time_resp, tr.resp_high[0],
-                         label=tr.name + ' step response ' + '(<' + str(int(Trace.threshold)) + ') '
+                         label=tr.name + ' step response ' + '(>' + str(int(Trace.threshold)) + ') '
                                + ' PID ' + self.headdict[tr.name + 'PID'])
-                    #plt.fill_between(tr.time_resp, tr.resp_high[0] - tr.resp_high[1], tr.resp_high[0] + tr.resp_high[1],
-                    #                 alpha=0.1)
                 plt.xlim([-0.001,0.501])
 
 
@@ -299,20 +282,18 @@ class CSV_log:
             plt.xlabel('response time in s')
 
             plt.grid()
+
         meanfreq = 1./(traces[0].time[1]-traces[0].time[0])
-        ax4 = plt.subplot(gs1[:, -1])
+        ax4 = plt.subplot(gs1[1, -1])
         t = Version+"| Betaflight: Version "+self.headdict['version']+' | Craftname: '+self.headdict['craftName']+\
             ' | meanFreq: '+str(int(meanfreq))+' | rcRate/Expo: '+self.headdict['rcRate']+'/'+ self.headdict['rcExpo']+'\nrcYawRate/Expo: '+self.headdict['rcYawRate']+'/' \
             +self.headdict['rcYawExpo']+' | deadBand: '+self.headdict['deadBand']+' | yawDeadBand: '+self.headdict['yawDeadBand'] \
             +' | Throttle min/tpa/max: ' + self.headdict['minThrottle']+'/'+self.headdict['tpa_breakpoint']+'/'+self.headdict['maxThrottle'] \
             + ' | dynThrPID: ' + self.headdict['dynThrottle']+ '| D-TermSP: ' + self.headdict['dTermSetPoint']+'| vbatComp: ' + self.headdict['vbatComp']
 
-        plt.text(0.5, 0, t, ha='left', rotation=90, color='grey', alpha=0.5, fontsize=8)
+        plt.text(0, 0, t, ha='left', rotation=90, color='grey', alpha=0.5, fontsize=8)
         ax4.axis('off')
         plt.savefig(self.file[:-13] + self.name + '_' + str(self.headdict['logNum'])+'.png')
-        #plt.show()
-        #plt.cla()
-        #plt.clf()
         return fig
 
     def __analyze(self):
@@ -320,17 +301,16 @@ class CSV_log:
         for t in self.traces:
             logging.info(t['name'] + '...   ')
             analyzed.append(Trace(t))
-            logging.info('\tDone!')
+            #logging.info('\tDone!')
         return analyzed
 
     def readcsv(self, fpath):
-        logging.info('Reading log '+str(self.headdict['logNum'][0])+'...   ')
+        logging.info('Reading log '+str(self.headdict['logNum'])+'...   ')
         datdic = {}
         data = read_csv(fpath, header=0, skipinitialspace=1)
         datdic.update({'time_us': data['time (us)'].values * 1e-6})
-        datdic.update({'throttle': data['rcCommand[3]'].values * 1e-6})         #### ???
+        datdic.update({'throttle': data['rcCommand[3]'].values})
 
-        #acc = []
         for i in ['0', '1', '2']:
             #acc.append(data['accSmooth[' + i+']'].values)
             datdic.update({'PID sum' + i: data['axisP[' + i+']'].values+data['axisI[' + i+']'].values+data['axisD[' + i+']'].values})
@@ -342,24 +322,6 @@ class CSV_log:
             else:
                 logging.warning('No gyro trace found!')
 
-        #plt.figure()
-        #for a in acc:
-        #    plt.plot(a/2048.)
-        #plt.plot(data['rcCommand[3]'].values-1000.)
-        #thr =data['rcCommand[3]'].values-1000.
-        #acce=data['accSmooth[2]'].values/2048.
-        #print thr
-
-        #H = np.fft.fft(np.array(thr), norm='ortho')
-        #G = np.fft.fft(np.array(acce), norm='ortho')
-        #Hcon = np.conj(H)
-        # deconvolved = np.real(np.fft.ifft(G*Hcon / (H * Hcon + 0.), norm='ortho',axis=1))[:,:self.rlen]
-        #deconvolved_sm = np.real(np.fft.ifft(G * Hcon / (H * Hcon + 100.)))
-        #plt.figure()
-        #plt.plot(deconvolved_sm.cumsum())
-        #print deconvolved_sm
-
-        #plt.show()
         logging.info('\tDone!')
 
         return datdic
@@ -369,9 +331,9 @@ class CSV_log:
         time = self.data['time_us']
         throttle = dat['throttle']
 
-        throt = (throttle-0.001)*(float(self.headdict['maxThrottle'])-float(self.headdict['minThrottle']))*100.
-        self.headdict.update({'tpa_percent':100.*(float(self.headdict['tpa_breakpoint'])-float(self.headdict['minThrottle']))/
-                                            (float(self.headdict['maxThrottle'])-float(self.headdict['minThrottle']))})
+        throt = ((throttle - 1000.) / (float(self.headdict['maxThrottle']) - 1000.)) * 100.
+
+        self.headdict.update({'tpa_percent':(float(self.headdict['tpa_breakpoint'])-1000.)/10.})
 
         traces = [{'name':'roll'},{'name':'pitch'},{'name':'yaw'}]
 
@@ -518,7 +480,7 @@ class BB_log:
         # The first line of the overall BBL file re-appears at the beginning
         # of each recorded session.
         try:
-          first_newline_index = content.index(bytes('\n', 'utf8'))
+          first_newline_index = content.index(bytes('\n'))
         except ValueError as e:
             raise ValueError(
                 'No newline in %dB of log data from %r.'
@@ -558,7 +520,6 @@ class BB_log:
 def run_analysis(log_file_path, plot_name, blackbox_decode):
     test = BB_log(log_file_path, plot_name, blackbox_decode)
     logging.info('Analysis complete, showing plot. (Close plot to exit.)')
-    plt.show()
 
 
 def strip_quotes(filepath):
@@ -601,13 +562,30 @@ if __name__ == "__main__":
     if args.log:
         for log_path in args.log:
             run_analysis(clean_path(log_path), args.name, args.blackbox_decode)
+        plt.show()
+
     else:
         while True:
-            logging.info('Interactive mode: enter log file, or type ^C (control-C) when done.')
+            logging.info('Interactive mode: Enter log file, or type close when done.')
+
             try:
-                raw_path = input('BBL log file path (type or drag in): ')
-                name = input('Plot name [default = %r]: ' % args.name) or args.name
+                time.sleep(0.1)
+                raw_path = raw_input('Balckbox log file path (type or drop here): ')
+
+                if raw_path=='close':
+                    logging.info('Goodbye!')
+                    break
+
+                raw_paths = strip_quotes(raw_path).replace("''", '""').split('""')        # seperate multiple paths
+                name = raw_input('Optional plot name:') or args.name
+
             except (EOFError, KeyboardInterrupt):
                 logging.info('Goodbye!')
                 break
-            run_analysis(clean_path(raw_path), name, args.blackbox_decode)
+
+            for p in raw_paths:
+                if os.path.isfile(clean_path(p)):
+                    run_analysis(clean_path(p), name, args.blackbox_decode)
+                else:
+                    logging.info('No valid input path!')
+            plt.show()
