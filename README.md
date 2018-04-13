@@ -8,10 +8,10 @@ The program is Python based but utilizes Blackbox_decode.exe from blackbox_tools
 
 As an example: 
 This was the BF 3.15 stock tune (including D Setpoint weight) on my 2.5" CS110: 
-![stock tune](beta_stock_2.5''.png)
+![stock tune](stock_tune.png)
 
 And this a smooth tune I came up with by doing just small LOS moves in the living room (you can even use angle mode, the result should be the same!): 
-![smooth tune](example_smooth_tune_0.png)
+![good tune](good_tune.png)
 
 The program calculates the system response from input (PID loop input = What the quad should do) and output (Gyro = The quad does). 
 Mathematically this is called deconvolution, which is the invers to convolution: Input * Response = Output. 
@@ -41,16 +41,16 @@ sudo pip3 install -r requirements.txt
 ## How to use this program:
 1. Record your log. Logs of 20s seem to give sufficient statistics. If it's slightly windy, longer logs can still give reasonable results. You can record multiple logs in one session: Each entry will yield a seperate plot.
 2. Place your logfiles, `blackbox_decode.exe` ([Windows download](https://github.com/cleanflight/blackbox-tools/releases/download/v0.4.3/blackbox-tools-0.4.3-windows.zip)) and `PID-Analyzer.exe` ([Windows download](http://bit.ly/PID-Analyzer)) in the same folder. You can also specify where to find these executables via command-line flags.
-3. Run `PID-Analyzer.exe` (this takes some seconds, it sets up a complete virtual python environment). Either interactively enter your `.BBL` files, or pass your `.BBL` file(s) via flags, like `PID-Analyzer --log one.BBL --log two.BBL`.
+3. Run `PID-Analyzer.exe` (this takes some seconds, it sets up a complete virtual python environment). Either interactively enter your `.BBL` files (drop one or more logs into cmd), or pass your `.BBL` file(s) via flags, like `PID-Analyzer --log one.BBL --log two.BBL` directly when run in cli mode.
 4. The logs are separated into temp files, read, analyzed and temp files deleted again.
-5. A plot window opens and a `.png` image is saved automatically.
+5. A plot window opens and a `.png` image is saved automatically in the folder correspoding to you entered name (default is `\tmp`).
 
 The windows executable includes a virtual python environment and only requires you to drag and drop your Betaflight blackbox logfile into the cmd window.
 
 
 In case of problems (if the cmd closes for example), please report including the log file.
 
-Tested on Win10 and MacOS 10.10, with 3.15/3.2 logs.
+Tested on Win7/10 and MacOS 10.10, with 3.15/3.2/3.3 logs.
 
 
 
