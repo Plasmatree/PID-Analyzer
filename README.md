@@ -10,9 +10,10 @@ As an example:
 This was the BF 3.15 stock tune (including D Setpoint weight) on my 2.5" CS110: 
 ![stock tune](stock_tune.png)
 
-And this a smooth tune I came up with by doing just small LOS moves in the living room (you can even use angle mode, the result should be the same!): 
+This a nice tune I came up with after some testing: 
 ![good tune](good_tune.png)
 
+You can even use angle mode, the result should be the same!
 The program calculates the system response from input (PID loop input = What the quad should do) and output (Gyro = The quad does). 
 Mathematically this is called deconvolution, which is the invers to convolution: Input * Response = Output. 
 A 0.5s long response is calculated from a 1.5s long windowed region of interest. The window is shifted roughly 0.2s to calculate each next response. 
