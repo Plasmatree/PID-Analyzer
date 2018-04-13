@@ -28,22 +28,29 @@ Keep in mind that if you go crazy on the throttle it will cause more distortion.
 This is the reason why the throttle and TPA threshold is additionally plotted.
 
 The whole thing is still under development and results/input of different and more experienced pilots will be appreciated!
- 
-## How to use this program:
-1. Record your log. Logs of 20s seem to give sufficient statistics. If it's slightly windy, longer logs can still give reasonable results. You can record multiple logs in one session: Each entry will yield a seperate plot. 
-2. Place your logfiles, [blackbox_decode.exe](https://github.com/cleanflight/blackbox-tools/releases/download/v0.4.3/blackbox-tools-0.4.3-windows.zip) and [PID-Analyzer.exe](http://bit.ly/PID-Analyzer) in the same folder. (<-- Download links)
-3. Run PID-Analyzer.exe (this takes some seconds, it sets up a complete virtual python environment)
-4. Drag and drop your file into the command window and press enter
-5. Type in an optional name that will be appended to the log name. Or don't. Press Enter.
-6. The logs are separated into temp files, read, analyzed and temp files deleted again. 
-7. A plot window opens and a .png image is saved automatically
 
-The windows executable includes a virtual python environment and only requires you to drag and drop your Betaflight blackbox logfile into the cmd window. 
+## Requirements
+
+To install required Python libraries, view the list of packages in `requirements.txt` or simply run:
+
+```
+sudo apt-get install python3-pip python3-tk
+sudo pip3 install -r requirements.txt
+```
+
+## How to use this program:
+1. Record your log. Logs of 20s seem to give sufficient statistics. If it's slightly windy, longer logs can still give reasonable results. You can record multiple logs in one session: Each entry will yield a seperate plot.
+2. Place your logfiles, `blackbox_decode.exe` ([Windows download](https://github.com/cleanflight/blackbox-tools/releases/download/v0.4.3/blackbox-tools-0.4.3-windows.zip)) and `PID-Analyzer.exe` ([Windows download](http://bit.ly/PID-Analyzer)) in the same folder. You can also specify where to find these executables via command-line flags.
+3. Run `PID-Analyzer.exe` (this takes some seconds, it sets up a complete virtual python environment). Either interactively enter your `.BBL` files, or pass your `.BBL` file(s) via flags, like `PID-Analyzer --log one.BBL --log two.BBL`.
+4. The logs are separated into temp files, read, analyzed and temp files deleted again.
+5. A plot window opens and a `.png` image is saved automatically.
+
+The windows executable includes a virtual python environment and only requires you to drag and drop your Betaflight blackbox logfile into the cmd window.
 
 
 In case of problems (if the cmd closes for example), please report including the log file.
 
-It's only tested on Win10 and with 3.15/3.2 logs.
+Tested on Win10 and MacOS 10.10, with 3.15/3.2 logs.
 
 
 

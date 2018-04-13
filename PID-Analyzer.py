@@ -1,4 +1,8 @@
+#!/usr/bin/env python
+import argparse
+import logging
 import os
+import subprocess
 import numpy as np
 from pandas import read_csv
 import matplotlib.pyplot as plt
@@ -15,6 +19,8 @@ from scipy.ndimage.filters import gaussian_filter1d
 #
 
 Version = 'PID-Analyzer 0.2 '
+
+LOG_MIN_BYTES = 500000
 
 class Trace:
     framelen = 2.
@@ -43,15 +49,16 @@ class Trace:
         if self.high_mask.sum()>0:
             self.resp_high = self.weighted_mode_avr(self.spec_sm, self.high_mask*self.toolow_mask, [-0.5,2.5], 600)
 
-    def low_high_mask(self, signal, threshold):
+    @staticmethod
+    def low_high_mask(signal, threshold):
         low = np.copy(signal)
 
         low[low <=threshold] = 1.
         low[low > threshold] = 0.
         high = -low+1.
 
-        if high.sum<10:     # ignore high pinput that is too short
-            high*=0.
+        if high.sum() < 10:     # ignore high pinput that is too short
+            high *= 0.
 
         return low, high
 
@@ -118,9 +125,8 @@ class Trace:
             stacks[k]=np.array(stacks[k])
         return stacks
 
-    def wiener_deconvolution(self, input, output, smooth):      # input/output are twosimensional
-        pad = len(input[0]) - 2*(len(input[0])%1024)            # padding to potence of 2, increases transform speed
-        #print 'pad:', pad, 'len:', len(inp[0])
+    def wiener_deconvolution(self, input, output, smooth):      # input/output are two-dimensional
+        pad = len(input[0]) + (1024 - (len(input[0]) % 1024))   # padding to power of 2, increases transform speed
         input = np.pad(input, [[0,0],[0,pad]], mode='constant')
         output = np.pad(output, [[0, 0], [0, pad]], mode='constant')
         H = np.fft.fft(input, axis=-1, norm='ortho')
@@ -196,7 +202,7 @@ class CSV_log:
 
         self.data = self.readcsv(self.file)
 
-        print 'Processing:'
+        logging.info('Processing:')
         self.traces = self.find_traces(self.data)
         self.roll, self.pitch, self.yaw = self.__analyze()
         self.fig = self.plot_all([self.roll, self.pitch, self.yaw])
@@ -301,7 +307,7 @@ class CSV_log:
             +' | Throttle min/tpa/max: ' + self.headdict['minThrottle']+'/'+self.headdict['tpa_breakpoint']+'/'+self.headdict['maxThrottle'] \
             + ' | dynThrPID: ' + self.headdict['dynThrottle']+ '| D-TermSP: ' + self.headdict['dTermSetPoint']+'| vbatComp: ' + self.headdict['vbatComp']
 
-        plt.text(0.5, 0, t, ha='left', rotation=90, wrap=True, color='grey', alpha=0.5, fontsize=8)
+        plt.text(0.5, 0, t, ha='left', rotation=90, color='grey', alpha=0.5, fontsize=8)
         ax4.axis('off')
         plt.savefig(self.file[:-13] + self.name + '_' + str(self.headdict['logNum'])+'.png')
         #plt.show()
@@ -312,13 +318,13 @@ class CSV_log:
     def __analyze(self):
         analyzed = []
         for t in self.traces:
-            print t['name'] + '...   ',
+            logging.info(t['name'] + '...   ')
             analyzed.append(Trace(t))
-            print 'Done!'
+            logging.info('\tDone!')
         return analyzed
 
     def readcsv(self, fpath):
-        print 'Reading log '+str(self.headdict['logNum'][0])+'...   ',
+        logging.info('Reading log '+str(self.headdict['logNum'][0])+'...   ')
         datdic = {}
         data = read_csv(fpath, header=0, skipinitialspace=1)
         datdic.update({'time_us': data['time (us)'].values * 1e-6})
@@ -334,7 +340,7 @@ class CSV_log:
             elif 'gyroData[0]' in data.keys():
                 datdic.update({'gyroData' + i: data['gyroData[' + i+']'].values})
             else:
-                print 'No gyro trace found!'
+                logging.warning('No gyro trace found!')
 
         #plt.figure()
         #for a in acc:
@@ -354,7 +360,7 @@ class CSV_log:
         #print deconvolved_sm
 
         #plt.show()
-        print 'Done!'
+        logging.info('\tDone!')
 
         return datdic
 
@@ -381,28 +387,18 @@ class CSV_log:
 
 
 class BB_log:
-    def __init__(self, filepath, name=''):
-        self.fpath = self.check_ends(filepath)
-        self.path, self.file = os.path.split(self.fpath)
+    def __init__(self, log_file_path, name, blackbox_decode):
+        self.blackbox_decode_bin_path = blackbox_decode
+        self.tmp_dir = os.path.join(os.path.dirname(log_file_path), name)
+        if not os.path.isdir(self.tmp_dir):
+            os.makedirs(self.tmp_dir)
         self.name = name
 
-        #self.maketemp(self.path)
-        self.loglist = self.decode(self.file)
+        self.loglist = self.decode(log_file_path)
         self.heads = self.beheader(self.loglist)
         self.figs = self._csv_iter(self.heads)
 
         self.deletejunk(self.loglist)
-
-    def check_ends(self, filepath):
-        filepath = str(filepath)
-        if filepath[-1]=='"' or filepath[-1]=="'":
-            return filepath[1:-1]
-        else:
-            return filepath
-
-    def maketemp(self, path):
-        os.mkdir(path+'/tmp')
-
 
     def deletejunk(self, loglist):
         for l in loglist:
@@ -411,7 +407,7 @@ class BB_log:
             try:
                 os.remove(l[:-3]+'01.event')
             except:
-                print 'No .event file of '+l+' found.'
+                logging.warning('No .event file of '+l+' found.')
         return
 
     def _csv_iter(self, heads):
@@ -423,7 +419,7 @@ class BB_log:
     def beheader(self, loglist):
         heads = []
         for i, bblog in enumerate(loglist):
-            log = open(self.path+'/'+bblog, 'r')
+            log = open(os.path.join(self.tmp_dir, bblog), 'rb')
             lines = log.readlines()
 
             headsdict = {'tempFile'     :'',
@@ -451,7 +447,8 @@ class BB_log:
 
             headsdict['tempFile'] = bblog
 
-            for l in lines:
+            for raw_line in lines:
+                l = raw_line.decode('latin-1')
                 #print l
                 headsdict['logNum'] = str(i)
                 if 'rcRate:' in l:
@@ -513,71 +510,104 @@ class BB_log:
             heads.append(headsdict)
         return heads
 
-    def logfinder(self, fpath):
-        path, file = os.path.split(fpath)
-        name = file[:-3]
-        flist = os.listdir(path)
-        csvlist =   []
-        csv_sizes = []
-        eventlist =  []
-
-        for i in range(1, 99, 1):
-            csvname = name+'_temp'+str(i)+'.01.csv'
-            eventname = name+'_temp'+str(i)+'.01.event'
-            if csvname not in flist: break
-            csvlist.append(csvname)
-            eventlist.append(eventname)
-        for csv in csvlist:
-            csv_sizes.append(os.path.getsize(path+'/'+csv))
-        return csvlist, csv_sizes, eventlist
-
     def decode(self, fpath):
-        log = open(fpath, 'rb')
-        log2 = open(fpath, 'r')
-        firstline = log2.readlines()[0]
-        content = log.read()
+        """Splits out one BBL per recorded session and converts each to CSV."""
+        with open(fpath, 'rb') as binary_log_view:
+            content = binary_log_view.read()
 
-        split = content.split(str(firstline))
-        temps = []
+        # The first line of the overall BBL file re-appears at the beginning
+        # of each recorded session.
+        try:
+          first_newline_index = content.index(bytes('\n', 'utf8'))
+        except ValueError as e:
+            raise ValueError(
+                'No newline in %dB of log data from %r.'
+                % (len(content), fpath),
+                e)
+        firstline = content[:first_newline_index + 1]
+
+        split = content.split(firstline)
+        bbl_sessions = []
         for i in range(len(split)):
-            newfile=open(fpath[:-4]+'_temp'+str(i)+fpath[-4:], 'wb')
-            newfile.write(firstline+split[i])
-            temps.append(fpath[:-4]+'_temp'+str(i)+fpath[-4:])
-            newfile.close()
+            path_root, path_ext = os.path.splitext(os.path.basename(fpath))
+            temp_path = os.path.join(
+                self.tmp_dir, '%s_temp%d%s' % (path_root, i, path_ext))
+            with open(temp_path, 'wb') as newfile:
+                newfile.write(firstline+split[i])
+            bbl_sessions.append(temp_path)
 
         loglist = []
-        for t in temps:
-            size = os.path.getsize(self.path+'/'+t)
-            if size>500000:
+        for bbl_session in bbl_sessions:
+            size_bytes = os.path.getsize(os.path.join(self.tmp_dir, bbl_session))
+            if size_bytes > LOG_MIN_BYTES:
                 try:
-                    msg = os.system('blackbox_decode.exe' + ' '+t)
-                    loglist.append(t)
+                    msg = subprocess.check_call([self.blackbox_decode_bin_path, bbl_session])
+                    loglist.append(bbl_session)
                 except:
-                    print 'Error in Blackbox_decode'
+                    logging.error(
+                        'Error in Blackbox_decode of %r' % bbl_session, exc_info=True)
             else:
-                os.remove(t)
+                # There is often a small bogus session at the start of the file.
+                logging.warning(
+                    'Ignoring BBL session %r, %dB < %dB.'
+                    % (bbl_session, size_bytes, LOG_MIN_BYTES))
+                os.remove(bbl_session)
         return loglist
 
 
+def run_analysis(log_file_path, plot_name, blackbox_decode):
+    test = BB_log(log_file_path, plot_name, blackbox_decode)
+    logging.info('Analysis complete, showing plot. (Close plot to exit.)')
+    plt.show()
 
-def main():
-    ### use here via:
-    #test = BB_log('path/file.bbl', 'addidtional name')
-    #plt.show()
 
-    print Version +'\n\n'
-    print 'Hello Pilot!'
-    print 'This program uses Blackbox_decode:\n' \
-          'https://github.com/cleanflight/blackbox-tools/releases\n' \
-          'to generate .csv files from your log.\n' \
-          'Please put logfiles, Blackbox_decode.exe and this program into a single folder.\n'
+def strip_quotes(filepath):
+    """Strips single or double quotes and extra whitespace from a string."""
+    return filepath.strip().strip("'").strip('"')
 
-    while True:
-        file = raw_input("Place your log here: \n-->\n")
-        name = raw_input('\nName for this plot: (optional)\n')
-        #thr_mode = raw_input('\n Sort respose by throttle? (experimental) Press y!')
-        test = BB_log(str(file), str(name))
-        plt.show()
+
+def clean_path(path):
+    return os.path.abspath(os.path.expanduser(strip_quotes(path)))
+
 
 if __name__ == "__main__":
-    main()
+    logging.basicConfig(
+        format='%(levelname)s %(asctime)s %(filename)s:%(lineno)s: %(message)s',
+        level=logging.INFO)
+
+    parser = argparse.ArgumentParser()
+    parser.add_argument(
+        '-l', '--log', action='append',
+        help='BBL log file(s) to analyse. Omit for interactive prompt.')
+    parser.add_argument('-n', '--name', default='tmp', help='Plot name.')
+    parser.add_argument(
+        '--blackbox_decode',
+        default=os.path.join(os.getcwd(), 'Blackbox_decode.exe'),
+        help='Path to Blackbox_decode.exe.')
+    args = parser.parse_args()
+
+    blackbox_decode_path = clean_path(args.blackbox_decode)
+    if not os.path.isfile(blackbox_decode_path):
+        parser.error(
+            ('Could not find Blackbox_decode.exe (used to generate CSVs from '
+             'your BBL file) at %s. You may need to install it from '
+             'https://github.com/cleanflight/blackbox-tools/releases.')
+            % blackbox_decode_path)
+    logging.info('Decoding with %r' % blackbox_decode_path)
+
+    logging.info(Version)
+    logging.info('Hello Pilot!')
+
+    if args.log:
+        for log_path in args.log:
+            run_analysis(clean_path(log_path), args.name, args.blackbox_decode)
+    else:
+        while True:
+            logging.info('Interactive mode: enter log file, or type ^C (control-C) when done.')
+            try:
+                raw_path = input('BBL log file path (type or drag in): ')
+                name = input('Plot name [default = %r]: ' % args.name) or args.name
+            except (EOFError, KeyboardInterrupt):
+                logging.info('Goodbye!')
+                break
+            run_analysis(clean_path(raw_path), name, args.blackbox_decode)
