@@ -19,7 +19,7 @@ from scipy.ndimage.filters import gaussian_filter1d
 #
 #
 
-Version = 'PID-Analyzer 0.30 '
+Version = 'PID-Analyzer 0.31'
 
 LOG_MIN_BYTES = 500000
 
@@ -64,7 +64,7 @@ class Trace:
         return low, high
 
     def pid_in(self, pval, gyro, pidp):
-        pidin = gyro + pval / (3. * pidp)
+        pidin = gyro + pval / (0.032029 * pidp)       # 0.032029 is P scaling factor from betaflight
         return pidin
 
     def rate_curve(self, rcin, inmax=500., outmax=800., rate=160.):
@@ -313,7 +313,10 @@ class CSV_log:
 
         for i in ['0', '1', '2']:
             #acc.append(data['accSmooth[' + i+']'].values)
-            datdic.update({'PID sum' + i: data['axisP[' + i+']'].values+data['axisI[' + i+']'].values+data['axisD[' + i+']'].values})
+            if i=='2':
+                datdic.update({'PID sum' + i: data['axisP[' + i + ']'].values + data['axisI[' + i + ']'].values})
+            else:
+                datdic.update({'PID sum' + i: data['axisP[' + i+']'].values+data['axisI[' + i+']'].values+data['axisD[' + i+']'].values})
             datdic.update({'PID loop in' + i: data['axisP[' + i+']'].values})
             if 'gyroADC[0]' in data.keys():
                 datdic.update({'gyroData' + i: data['gyroADC[' + i+']'].values})
@@ -342,7 +345,7 @@ class CSV_log:
             dic.update({'input':dat['PID loop in'+str(i)]})
             dic.update({'output':dat['gyroData'+str(i)]})
             dic.update({'PIDsum':dat['PID sum'+str(i)]})
-            dic.update({'P':float((self.headdict[dic['name']+'PID']).split(',')[0])*0.01})
+            dic.update({'P':float((self.headdict[dic['name']+'PID']).split(',')[0])})
             dic.update({'throttle':throt})
 
         return traces
