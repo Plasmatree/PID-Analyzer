@@ -1,3 +1,10 @@
+### PID-Analyzer 0.4 is online!
+- Now with noise analysis ([see wiki](https://github.com/Plasmatree/PID-Analyzer/wiki/Noise-analysis))
+- scaled down plot window size, better if you are using it on a screen <FHD
+- you can choose not to display the plot window at all. Useful for files with lots of sublogs. Also saves on ram.
+- Now two images save automatically (PID and noise plot)
+
+
 # PID-Analyzer
 
 This program reads Betaflight blackbox logs and calculates the PID step response. It is made as a tool for a more systematic approach to PID tuning.
@@ -41,7 +48,7 @@ sudo pip3 install -r requirements.txt
 
 ## How to use this program:
 1. Record your log. Logs of 20s seem to give sufficient statistics. If it's slightly windy, longer logs can still give reasonable results. You can record multiple logs in one session: Each entry will yield a seperate plot.
-2. Place your logfiles, `blackbox_decode.exe` ([Windows download](https://github.com/cleanflight/blackbox-tools/releases/download/v0.4.3/blackbox-tools-0.4.3-windows.zip)) and `PID-Analyzer.exe` ([Windows download](http://bit.ly/PID-Analyzer)) in the same folder. You can also specify where to find these executables via command-line flags.
+2. Place your logfiles, `blackbox_decode.exe` ([Windows download](https://github.com/cleanflight/blackbox-tools/releases/download/v0.4.3/blackbox-tools-0.4.3-windows.zip)) and `PID-Analyzer.exe` https://github.com/Plasmatree/PID-Analyzer/wiki/Noise-analysis in the same folder. You can also specify where to find these executables via command-line flags.
 3. Run `PID-Analyzer.exe` (this takes some seconds, it sets up a complete virtual python environment). Either interactively enter your `.BBL` files (drop one or more logs into cmd), or pass your `.BBL` file(s) via flags, like `PID-Analyzer --log one.BBL --log two.BBL` directly when run in cli mode.
 4. The logs are separated into temp files, read, analyzed and temp files deleted again.
 5. A plot window opens and a `.png` image is saved automatically in the folder correspoding to you entered name (default is `\tmp`).
