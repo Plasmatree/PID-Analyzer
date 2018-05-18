@@ -930,7 +930,7 @@ if __name__ == "__main__":
 
     if args.log:
         for log_path in args.log:
-            run_analysis(clean_path(log_path), args.name, args.blackbox_decode)
+            run_analysis(clean_path(log_path), args.name, args.blackbox_decode, args.show)
         if args.show.upper() == 'Y':
             plt.show()
         else:
