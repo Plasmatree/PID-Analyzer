@@ -1,3 +1,10 @@
+### PID-Analyzer 0.4 is online!
+- Now with noise analysis ([see wiki](https://github.com/Plasmatree/PID-Analyzer/wiki/Noise-analysis))
+- scaled down plot window size, better if you are using it on a screen <FHD
+- you can choose not to display the plot window at all. Useful for files with lots of sublogs. Also saves on ram.
+- Now two images save automatically (PID and noise plot)
+
+
 # PID-Analyzer
 
 This program reads Betaflight blackbox logs and calculates the PID step response. It is made as a tool for a more systematic approach to PID tuning.
