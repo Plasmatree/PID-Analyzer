@@ -12,6 +12,8 @@ from scipy.interpolate import interp1d
 from matplotlib.gridspec import GridSpec
 from scipy.ndimage.filters import gaussian_filter1d
 import matplotlib.colors as colors
+from scipy.optimize import minimize, basinhopping
+
 
 # ----------------------------------------------------------------------------------
 # "THE BEER-WARE LICENSE" (Revision 42):
@@ -22,19 +24,19 @@ import matplotlib.colors as colors
 #
 #
 
-Version = 'PID-Analyzer 0.40'
+Version = 'PID-Analyzer 0.50'
 
 LOG_MIN_BYTES = 500000
 
 class Trace:
-    framelen = 1.
-    resplen = 0.5
-    smooth = 0.2         #
-    tuk_alpha = 1.0     # alpha of tukey window, if used
-    superpos = 16       # sub windowing (superpos windows in framelen)
-    threshold = 500.    # threshold for 'high input rate'
-    noise_framelen = 0.3 # window width for noise analysis
-    noise_superpos = 16  # subsampling for noise analysis windows
+    framelen = 1.           # length of each single frame over which to compute response
+    resplen = 0.5           # length of respose window
+    cutfreq = 50.           # cutfreqency of what is considered as input
+    tuk_alpha = 1.0         # alpha of tukey window, if used
+    superpos = 16           # sub windowing (superpos windows in framelen)
+    threshold = 500.        # threshold for 'high input rate'
+    noise_framelen = 0.3    # window width for noise analysis
+    noise_superpos = 16     # subsampling for noise analysis windows
 
     def __init__(self, data):
         self.data = data
@@ -44,24 +46,31 @@ class Trace:
 
         self.name = self.data['name']
         self.time = self.data['time']
+        self.dt=self.time[0]-self.time[1]
         self.gyro = self.data['gyro']
         self.input = self.data['input']
         self.throttle = self.data['throttle']
-        self.throt_hist, self.throt_scale = np.histogram(self.throttle, np.linspace(0, 100, 101, dtype=np.float32), normed=True)
+        self.throt_hist, self.throt_scale = np.histogram(self.throttle, np.linspace(0, 100, 101, dtype=np.float64), normed=True)
 
         self.flen = self.stepcalc(self.time, Trace.framelen)        # array len corresponding to framelen in s
         self.rlen = self.stepcalc(self.time, Trace.resplen)         # array len corresponding to resplen in s
         self.time_resp = self.time[0:self.rlen]-self.time[0]
 
         #enable this to generate artifical gyro trace with known system response
-        #self.gyro=self.toy_out(self.input, delay=0.01)
+        #self.data['gyro']=self.toy_out(self.input, delay=0.01, mode='normal')
 
-        self.stacks = self.winstacker({'time':[],'input':[],'gyro':[]}, self.flen, Trace.superpos)                                  # [[time, input, output],]
+        self.stacks = self.winstacker({'time':[],'input':[],'gyro':[], 'throttle':[]}, self.flen, Trace.superpos)                                  # [[time, input, output],]
         self.window = np.hanning(self.flen)                                     #self.tukeywin(self.flen, self.tuk_alpha)
-        self.spec_sm, self.avr_t, self.avr_in, self.max_in = self.stack_response(self.stacks, self.window)
+        self.spec_sm, self.avr_t, self.avr_in, self.max_in, self.max_thr = self.stack_response(self.stacks, self.window)
         self.low_mask, self.high_mask = self.low_high_mask(self.max_in, self.threshold)       #calcs masks for high and low inputs according to threshold
         self.toolow_mask = self.low_high_mask(self.max_in, 20)[1]          #mask for ignoring noisy low input
+
         self.resp_sm = self.weighted_mode_avr(self.spec_sm, self.toolow_mask, [-1.5,3.5], 1000)
+        self.resp_quality = -self.to_mask((np.abs(self.spec_sm -self.resp_sm[0]).mean(axis=1)).clip(0.5-1e-9,0.5))+1.
+        # masking by setting trottle of unwanted traces to neg
+        self.thr_response = self.hist2d(self.max_thr * (2. * (self.toolow_mask*self.resp_quality) - 1.), self.time_resp,
+                                        (self.spec_sm.transpose() * self.toolow_mask).transpose(), [101, self.rlen])
+
         self.resp_low = self.weighted_mode_avr(self.spec_sm, self.low_mask*self.toolow_mask, [-1.5,3.5], 1000)
         if self.high_mask.sum()>0:
             self.resp_high = self.weighted_mode_avr(self.spec_sm, self.high_mask*self.toolow_mask, [-1.5,3.5], 1000)
@@ -74,12 +83,13 @@ class Trace:
         self.noise_gyro = self.stackspectrum(self.noise_stack['time'],self.noise_stack['throttle'],self.noise_stack['gyro'], self.noise_win)
         self.noise_d = self.stackspectrum(self.noise_stack['time'], self.noise_stack['throttle'], self.noise_stack['d_err'], self.noise_win)
         self.noise_debug = self.stackspectrum(self.noise_stack['time'], self.noise_stack['throttle'], self.noise_stack['debug'], self.noise_win)
-        if self.noise_debug['hist2d_raw'].sum()>0:
+        if self.noise_debug['hist2d'].sum()>0:
             ## mask 0 entries
             thr_mask = self.noise_gyro['throt_hist_avr'].clip(0,1)
-            self.filter_trans = np.average(self.noise_gyro['hist2d_raw'], axis=1, weights=thr_mask)/np.average(self.noise_debug['hist2d_raw'], axis=1, weights=thr_mask)
+            self.filter_trans = np.average(self.noise_gyro['hist2d'], axis=1, weights=thr_mask)/\
+                                np.average(self.noise_debug['hist2d'], axis=1, weights=thr_mask)
         else:
-            self.filter_trans = self.noise_gyro['hist2d_raw'].mean(axis=1)*0.
+            self.filter_trans = self.noise_gyro['hist2d'].mean(axis=1)*0.
 
     @staticmethod
     def low_high_mask(signal, threshold):
@@ -94,16 +104,33 @@ class Trace:
 
         return low, high
 
+    def to_mask(self, clipped):
+        clipped-=clipped.min()
+        clipped/=clipped.max()
+        return clipped
+
+
     def pid_in(self, pval, gyro, pidp):
         pidin = gyro + pval / (0.032029 * pidp)       # 0.032029 is P scaling factor from betaflight
         return pidin
 
     def rate_curve(self, rcin, inmax=500., outmax=800., rate=160.):
+        ### an estimated rate curve. not used.
         expoin = (np.exp((rcin - inmax) / rate) - np.exp((-rcin - inmax) / rate)) * outmax
         return expoin
 
-    ### makes tukey widow for envelopig
+
+    def calc_delay(self, time, trace1, trace2):
+        ### minimizes trace1-trace2 by shifting trace1
+        tf1 = interp1d(time[2000:-2000], trace1[2000:-2000], fill_value=0., bounds_error=False)
+        tf2 = interp1d(time[2000:-2000], trace2[2000:-2000], fill_value=0., bounds_error=False)
+        fun = lambda x: ((tf1(time - x*0.5) - tf2(time+ x*0.5)) ** 2).mean()
+        shift = minimize(fun, np.array([0.01])).x[0]
+        steps = np.round(shift / (time[1] - time[0]))
+        return {'time':shift, 'steps':int(steps)}
+
     def tukeywin(self, len, alpha=0.5):
+        ### makes tukey widow for envelopig
         M = len
         n = np.arange(M - 1.)  #
         if alpha <= 0:
@@ -112,7 +139,7 @@ class Trace:
             return np.hanning(M)
 
         # Normal case
-        x = np.linspace(0, 1, M, dtype=np.float32)
+        x = np.linspace(0, 1, M, dtype=np.float64)
         w = np.ones(x.shape)
 
         # first condition 0 <= x < alpha/2
@@ -127,26 +154,32 @@ class Trace:
 
         return w
 
-    # generates artificial output for benchmarking
-    def toy_out(self, inp, delay=0.01, length=0.01, noise=5.):
+    def toy_out(self, inp, delay=0.01, length=0.01, noise=5., mode='normal', sinfreq=100.):
+        # generates artificial output for benchmarking
         freq= 1./(self.time[1]-self.time[0])
         toyresp = np.zeros(int((delay+length)*freq))
         toyresp[int((delay)*freq):]=1.
         toyresp/=toyresp.sum()
         toyout = np.convolve(inp, toyresp, mode='full')[:len(inp)]#*0.9
-        return toyout+(np.random.random_sample(len(toyout))-0.5)*noise
+        if mode=='normal':
+            noise_sig = (np.random.random_sample(len(toyout))-0.5)*noise
+        elif mode=='sin':
+            noise_sig = (np.sin(2.*np.pi*self.time*sinfreq)) * noise
+        else:
+            noise_sig=0.
+        return toyout+noise_sig
 
 
-    ### equalizes time scale
     def equalize(self, time, data):
+        ### equalizes time scale
         data_f = interp1d(time, data)
-        newtime = np.linspace(time[0], time[-1], len(time), dtype=np.float32)
+        newtime = np.linspace(time[0], time[-1], len(time), dtype=np.float64)
         return newtime, data_f(newtime)
 
-    ### equalizes full dict of data
     def equalize_data(self):
+        ### equalizes full dict of data
         time = self.data['time']
-        newtime = np.linspace(time[0], time[-1], len(time), dtype=np.float32)
+        newtime = np.linspace(time[0], time[-1], len(time), dtype=np.float64)
         for key in self.data:
               if isinstance(self.data[key],np.ndarray):
                   if len(self.data[key])==len(time):
@@ -154,15 +187,15 @@ class Trace:
         self.data['time']=newtime
 
 
-    ### calculates frequency and resulting windowlength
     def stepcalc(self, time, duration):
+        ### calculates frequency and resulting windowlength
         tstep = (time[1]-time[0])
         freq = 1./tstep
         arr_len = duration * freq
         return int(arr_len)
 
-    ### makes stack of windows for deconvolution
     def winstacker(self, stackdict, flen, superpos):
+        ### makes stack of windows for deconvolution
         tlen = len(self.data['time'])
         shift = int(flen/superpos)
         wins = int(tlen/shift)-superpos
@@ -170,45 +203,47 @@ class Trace:
             for key in stackdict.keys():
                 stackdict[key].append(self.data[key][i * shift:i * shift + flen])
         for k in stackdict.keys():
-            stackdict[k]=np.array(stackdict[k], dtype=np.float32)
+            stackdict[k]=np.array(stackdict[k], dtype=np.float64)
         return stackdict
 
-    def wiener_deconvolution(self, input, output, smooth):      # input/output are two-dimensional
+    def wiener_deconvolution(self, input, output, cutfreq):      # input/output are two-dimensional
         pad = 1024 - (len(input[0]) % 1024)                     # padding to power of 2, increases transform speed
         input = np.pad(input, [[0,0],[0,pad]], mode='constant')
         output = np.pad(output, [[0, 0], [0, pad]], mode='constant')
-        H = np.fft.fft(input, axis=-1, norm='ortho')
-        G = np.fft.fft(output,axis=-1, norm='ortho')
+        H = np.fft.fft(input, axis=-1)
+        G = np.fft.fft(output,axis=-1)
+        freq = np.abs(np.fft.fftfreq(len(input[0]), self.dt))
+        sn = self.to_mask(np.clip(np.abs(freq), cutfreq*0.9, cutfreq*1.))
+        sn= 10.*(-sn+1.+1e-9)       # +1e-9 to prohibit 0/0 situations
         Hcon = np.conj(H)
-        deconvolved_sm = np.real(np.fft.ifft(G * Hcon / (H * Hcon + smooth),axis=-1))
+        deconvolved_sm = np.real(np.fft.ifft(G * Hcon / (H * Hcon + 1./sn),axis=-1))
         return deconvolved_sm
 
     def stack_response(self, stacks, window):
         inp = stacks['input'] * window
         outp = stacks['gyro'] * window
+        thr = stacks['throttle'] * window
 
-        deconvolved_sm = self.wiener_deconvolution(inp, outp, self.smooth)[:, :self.rlen]
+        deconvolved_sm = self.wiener_deconvolution(inp, outp, self.cutfreq)[:, :self.rlen]
         delta_resp = deconvolved_sm.cumsum(axis=1)
-        delta_resp -= delta_resp[:, 0].repeat(len(delta_resp[0])).reshape(np.shape(delta_resp))
-        # itegration leaves constant offset undefined. we know that the first point has to be 0
-        # offset might be also caused by noise or wiener-smoothing (related to s/n)
 
+        max_thr = np.abs(np.abs(thr)).max(axis=1)
         avr_in = np.abs(np.abs(inp)).mean(axis=1)
         max_in = np.max(np.abs(inp), axis=1)
         avr_t = stacks['time'].mean(axis=1)
 
-        return delta_resp, avr_t, avr_in, max_in
+        return delta_resp, avr_t, avr_in, max_in, max_thr
 
-    ### fouriertransform for noise analysis. returns frequencies and spectrum.
     def spectrum(self, time, traces):
+        ### fouriertransform for noise analysis. returns frequencies and spectrum.
         pad = 1024 - (len(traces[0]) % 1024)  # padding to power of 2, increases transform speed
         traces = np.pad(traces, [[0, 0], [0, pad]], mode='constant')
         trspec = np.fft.rfft(traces, axis=-1, norm='ortho')
         trfreq = np.fft.rfftfreq(len(traces[0]), time[1] - time[0])
         return trfreq, trspec
 
-    ### calculates filter transmission and phaseshift from stack of windows. Not in use, maybe later.
     def stackfilter(self, time, trace_ref, trace_filt, window):
+        ### calculates filter transmission and phaseshift from stack of windows. Not in use, maybe later.
         # slicing off last 2s to get rid of landing
         #maybe pass throttle for further analysis...
         filt = trace_filt[:-int(Trace.noise_superpos * 2. / Trace.noise_framelen), :] * window
@@ -221,49 +256,60 @@ class Trace:
         f_amp_freq, f_amp_hist =np.histogram(full_freq_f, weights=np.abs(full_spec_f.real).flatten(), bins=int(full_freq_f[-1]))
         r_amp_freq, r_amp_hist = np.histogram(full_freq_r, weights=np.abs(full_spec_r.real).flatten(), bins=int(full_freq_r[-1]))
 
+    def hist2d(self, x, y, weights, bins):   #bins[nx,ny]
+        ### generates a 2d hist from input 1d axis for x,y. repeats them to match shape of weights X*Y (data points)
+        ### x will be 0-100%
+        freqs = np.repeat(np.array([y], dtype=np.float64), len(x), axis=0)
+        throts = np.repeat(np.array([x], dtype=np.float64), len(y), axis=0).transpose()
+        throt_hist_avr, throt_scale_avr = np.histogram(x, 101, [0, 100])
 
-    ### calculates spectrogram from stack of windows against throttle.
+        hist2d = np.histogram2d(throts.flatten(), freqs.flatten(),
+                                range=[[0, 100], [y[0], y[-1]]],
+                                bins=bins, weights=weights.flatten(), normed=False)[0].transpose()
+
+        hist2d = np.array(abs(hist2d), dtype=np.float64)
+        hist2d_norm = np.copy(hist2d)
+        hist2d_norm /=  (throt_hist_avr + 1e-9)
+
+        return {'hist2d_norm':hist2d_norm, 'hist2d':hist2d, 'throt_hist':throt_hist_avr,'throt_scale':throt_scale_avr}
+
+
     def stackspectrum(self, time, throttle, trace, window):
+        ### calculates spectrogram from stack of windows against throttle.
         # slicing off last 2s to get rid of landing
         gyro = trace[:-int(Trace.noise_superpos*2./Trace.noise_framelen),:] * window
         thr = throttle[:-int(Trace.noise_superpos*2./Trace.noise_framelen),:] * window
         time = time[:-int(Trace.noise_superpos*2./Trace.noise_framelen),:]
 
-        avr_thr = np.abs(thr).max(axis=1)
-
         freq, spec = self.spectrum(time[0], gyro)
 
+        weights = abs(spec.real)
+        avr_thr = np.abs(thr).max(axis=1)
+
+        hist2d=self.hist2d(avr_thr, freq,weights,[101,len(freq)/4])
+
         filt_width = 3  # width of gaussian smoothing for hist data
+        hist2d_sm = gaussian_filter1d(hist2d['hist2d_norm'], filt_width, axis=1, mode='constant')
 
-        freqs = np.repeat(np.array([freq],dtype=np.float32), len(avr_thr), axis=0)
-        throts = np.repeat(np.array([avr_thr],dtype=np.float32), len(freq), axis=0).transpose()
+        # get max value in histogram >100hz
+        thresh = 100.
+        mask = self.to_mask(freq[:-1:4].clip(thresh-1e-9,thresh))
+        maxval = np.max(hist2d_sm.transpose()*mask)
 
-        throt_hist_avr, throt_scale_avr = np.histogram(avr_thr,101, [0,100])
+        return {'throt_hist_avr':hist2d['throt_hist'],'throt_axis':hist2d['throt_scale'],'freq_axis':freq[::4],
+                'hist2d_norm':hist2d['hist2d_norm'], 'hist2d_sm':hist2d_sm, 'hist2d':hist2d['hist2d'], 'max':maxval}
 
-        hist2d = np.histogram2d(throts.flatten(), freqs.flatten(),
-                                range=[[0, 100],[freq[0], freq[-1]]],
-                                bins=[101, len(freq)/4], weights=abs(spec.real).flatten(), normed=False)[0].transpose()
-
-        hist2d=np.array(abs(hist2d), dtype=np.float32)
-        hist2d_raw = hist2d.copy()
-        hist2d/=(throt_hist_avr+1e-6)
-        hist2d_sm = gaussian_filter1d(hist2d, filt_width, axis=1, mode='constant')
-        maxval = np.max(hist2d_sm[25:,:])
-
-        return {'throt_hist_avr':throt_hist_avr,'throt_axis':throt_scale_avr,'freq_axis':freq[::4],
-                'hist2d':hist2d, 'hist2d_sm':hist2d_sm, 'hist2d_raw':hist2d_raw, 'max':maxval}
-
-    ### finds the most common trace and std
     def weighted_mode_avr(self, values, weights, vertrange, vertbins):
+        ### finds the most common trace and std
         threshold = 0.5  # threshold for std calculation
         filt_width = 7  # width of gaussian smoothing for hist data
 
-        resp_y = np.linspace(vertrange[0], vertrange[-1], vertbins, dtype=np.float32)
-        times = np.repeat(np.array([self.time_resp],dtype=np.float32), len(values), axis=0)
+        resp_y = np.linspace(vertrange[0], vertrange[-1], vertbins, dtype=np.float64)
+        times = np.repeat(np.array([self.time_resp],dtype=np.float64), len(values), axis=0)
         weights = np.repeat(weights, len(values[0]))
 
         hist2d = np.histogram2d(times.flatten(), values.flatten(),
-                                range=[[self.time_resp[0]-1e-5, self.time_resp[-1]+1e-5], vertrange],
+                                range=[[self.time_resp[0], self.time_resp[-1]], vertrange],
                                 bins=[len(times[0]), vertbins], weights=weights.flatten())[0].transpose()
         ### shift outer edges by +-1e-5 (10us) bacause of dtype32. Otherwise different precisions lead to artefacting.
         ### solution to this --> somethings strage here. In outer most edges some bins are doubled, some are empty.
@@ -323,8 +369,11 @@ class CSV_log:
 
         meanspec = np.array([traces[0].noise_gyro['hist2d_sm'].mean(axis=1).flatten(),
                     traces[1].noise_gyro['hist2d_sm'].mean(axis=1).flatten(),
-                    traces[2].noise_gyro['hist2d_sm'].mean(axis=1).flatten()],dtype=np.float32)
-        meanspec_max = meanspec[:,25:].max(axis=1)
+                    traces[2].noise_gyro['hist2d_sm'].mean(axis=1).flatten()],dtype=np.float64)
+        thresh = 100.
+        mask = traces[0].to_mask(traces[0].noise_gyro['freq_axis'].clip(thresh-1e-9,thresh))
+        meanspec_max = np.max(meanspec*mask[:-1])
+        #meanspec_max = meanspec[:,25:].max(axis=1)
 
         cax_gyro = plt.subplot(gs1[0, 0:7])
         cax_debug = plt.subplot(gs1[0, 8:15])
@@ -464,9 +513,9 @@ class CSV_log:
         ax5r = plt.subplot(gs1[:1, 27:30])
         ax5l.axis('off')
         ax5r.axis('off')
-        filt_settings_l = 'G lpf type: '+self.headdict['gyro_lowpass_type']+' at '+self.headdict['gyro_lowpass_hz']+'\n'+\
+        filt_settings_l = 'G lpf type: '+self.headdict['gyro_lpf']+' at '+self.headdict['gyro_lowpass_hz']+'\n'+\
                           'G notch at: '+self.headdict['gyro_notch_hz']+' cut '+self.headdict['gyro_notch_cutoff']+'\n'\
-                          'gyro lpf: '+self.headdict['gyro_lpf']
+                          'gyro lpf 2: '+self.headdict['gyro_lowpass_type']
         filt_settings_r = '| D lpf type: ' + self.headdict['dterm_filter_type'] + ' at ' + self.headdict['dterm_lpf_hz'] + '\n' + \
                           '| D notch at: ' + self.headdict['dterm_notch_hz'] + ' cut ' + self.headdict['dterm_notch_cutoff'] + '\n' + \
                           '| Yaw lpf at: ' + self.headdict['yaw_lpf_hz']
@@ -489,7 +538,7 @@ class CSV_log:
         gs1 = GridSpec(24, 3 * 10, wspace=0.6, hspace=0.7, left=0.04, right=1., bottom=0.05, top=0.97)
 
         for i, tr in enumerate(traces):
-            ax0 = plt.subplot(gs1[0:7, i*10:i*10+9])
+            ax0 = plt.subplot(gs1[0:6, i*10:i*10+9])
             plt.title(tr.name)
             plt.plot(tr.time, tr.gyro, label=tr.name + ' gyro')
             plt.plot(tr.time, tr.input, label=tr.name + ' loop input')
@@ -501,30 +550,42 @@ class CSV_log:
             plt.legend(loc=1)
             plt.setp(ax0.get_xticklabels(), visible=False)
 
-            ax1 = plt.subplot(gs1[7:9, i*10:i*10+9], sharex=ax0)
-            plt.hlines(self.headdict['tpa_percent'], tr.avr_t[0], tr.avr_t[-1], label='tpa', colors='red', alpha=0.5)
+            ax1 = plt.subplot(gs1[6:8, i*10:i*10+9], sharex=ax0)
+            plt.hlines(self.headdict['tpa_percent'], tr.time[0], tr.time[-1], label='tpa', colors='red', alpha=0.5)
             plt.fill_between(tr.time, 0., tr.throttle, label='throttle', color='grey', alpha=0.2)
             plt.ylabel('throttle %')
             ax1.get_yaxis().set_label_coords(-0.1, 0.5)
             plt.grid()
+            plt.xlim([tr.time[0], tr.time[-1]])
             plt.ylim([0, 100])
             plt.legend(loc=1)
-            plt.setp(ax1.get_xticklabels(), visible=False)
+            plt.xlabel('log time in s')
 
-            ax2 = plt.subplot(gs1[9:16, i*10:i*10+9], sharex=ax0)
-            plt.pcolormesh(tr.avr_t, tr.time_resp, np.transpose(tr.spec_sm), vmin=0, vmax=2.)
+            ###old raw data plot. maybe put it back in later as option...
+            #plt.setp(ax1.get_xticklabels(), visible=False)
+            #ax2 = plt.subplot(gs1[9:16, i*10:i*10+9], sharex=ax0)
+            #plt.pcolormesh(tr.avr_t, tr.time_resp, np.transpose(tr.spec_sm), vmin=0, vmax=2.)
+            #plt.ylabel('response time in s')
+            #ax2.get_yaxis().set_label_coords(-0.1, 0.5)
+            #plt.xlabel('log time in s')
+            #plt.xlim([tr.avr_t[0], tr.avr_t[-1]])
+
+            ax2 = plt.subplot(gs1[9:16, i * 10:i * 10 + 9])
+            plt.title(tr.name + ' response', y=0.88, color='w')
+            plt.pcolormesh(tr.thr_response['throt_scale'], tr.time_resp, tr.thr_response['hist2d_norm'], vmin=0., vmax=2.)
             plt.ylabel('response time in s')
             ax2.get_yaxis().set_label_coords(-0.1, 0.5)
-            plt.xlabel('log time in s')
-            plt.xlim([tr.avr_t[0], tr.avr_t[-1]])
+            plt.xlabel('throttle in %')
+            plt.xlim([0.,100.])
+
 
             if style=='fancy':
                 theCM = plt.cm.get_cmap('Blues')
                 theCM._init()
-                alphas = np.abs(np.linspace(0., 0.5, theCM.N, dtype=np.float32))
+                alphas = np.abs(np.linspace(0., 0.5, theCM.N, dtype=np.float64))
                 theCM._lut[:-3,-1] = alphas
                 ax3 = plt.subplot(gs1[17:, i*10:i*10+9])
-                plt.contourf(*tr.resp_low[2], cmap=theCM, linestyles=None, antialiased=True, levels=np.linspace(0,1,20, dtype=np.float32))
+                plt.contourf(*tr.resp_low[2], cmap=theCM, linestyles=None, antialiased=True, levels=np.linspace(0,1,20, dtype=np.float64))
                 plt.plot(tr.time_resp, tr.resp_low[0],
                          label=tr.name + ' step response ' + '(<' + str(int(Trace.threshold)) + ') '
                                + ' PID ' + self.headdict[tr.name + 'PID'])
@@ -533,9 +594,9 @@ class CSV_log:
                 if tr.high_mask.sum() > 0:
                     theCM = plt.cm.get_cmap('Oranges')
                     theCM._init()
-                    alphas = np.abs(np.linspace(0., 0.5, theCM.N, dtype=np.float32))
+                    alphas = np.abs(np.linspace(0., 0.5, theCM.N, dtype=np.float64))
                     theCM._lut[:-3,-1] = alphas
-                    plt.contourf(*tr.resp_high[2], cmap=theCM, linestyles=None, antialiased=True, levels=np.linspace(0,1,20, dtype=np.float32))
+                    plt.contourf(*tr.resp_high[2], cmap=theCM, linestyles=None, antialiased=True, levels=np.linspace(0,1,20, dtype=np.float64))
                     plt.plot(tr.time_resp, tr.resp_high[0],
                          label=tr.name + ' step response ' + '(>' + str(int(Trace.threshold)) + ') '
                                + ' PID ' + self.headdict[tr.name + 'PID'])
@@ -600,7 +661,7 @@ class CSV_log:
                    #'motor[0]', 'motor[1]', 'motor[2]', 'motor[3]',
                    #'energyCumulative (mAh)','vbatLatest (V)', 'amperageLatest (A)'
                    ]
-        data = read_csv(fpath, header=0, skipinitialspace=1, usecols=lambda k: k in wanted, dtype=np.float32)
+        data = read_csv(fpath, header=0, skipinitialspace=1, usecols=lambda k: k in wanted, dtype=np.float64)
         datdic.update({'time_us': data['time (us)'].values * 1e-6})
         datdic.update({'throttle': data['rcCommand[3]'].values})
 
@@ -755,7 +816,7 @@ class BB_log:
                          'vbat_pid_compensation:':'vbatComp','vbat_pid_gain:':'vbatComp',
                          'gyro_lpf:':'gyro_lpf',
                          'gyro_lowpass_type:':'gyro_lowpass_type',
-                         'gyro_lowpass_hz:':'gyro_lowpass_hz',
+                         'gyro_lowpass_hz:':'gyro_lowpass_hz','gyro_lpf_hz:':'gyro_lowpass_hz',
                          'gyro_notch_hz:':'gyro_notch_hz',
                          'gyro_notch_cutoff:':'gyro_notch_cutoff',
                          'dterm_filter_type:':'dterm_filter_type',
