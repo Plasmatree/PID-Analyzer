@@ -24,7 +24,7 @@ from scipy.optimize import minimize, basinhopping
 #
 #
 
-Version = 'PID-Analyzer 0.50'
+Version = 'PID-Analyzer 0.51'
 
 LOG_MIN_BYTES = 500000
 
@@ -452,6 +452,12 @@ class CSV_log:
                     cax_d.xaxis.set_ticks_position('top')
                     cax_d.xaxis.set_tick_params(pad=-0.5)
 
+                if max_noise_d == 1.:
+                    pc2.set_clim([1., 10.1])
+                    plt.text(0.5, 0.5, 'no D[' + str(i) + '] trace found!\n',
+                             horizontalalignment='center', verticalalignment='center',
+                             transform=ax2.transAxes, fontdict={'color': 'white'})
+
             else:
                 # throttle plots
                 ax21 = plt.subplot(gs1[1 + i * 8:1 + i * 8 + 4, 16:23])
@@ -667,19 +673,35 @@ class CSV_log:
 
         for i in ['0', '1', '2']:
             datdic.update({'rcCommand' + i: data['rcCommand['+i+']'].values})
-            datdic.update({'PID loop in' + i: data['axisP[' + i + ']'].values})
+            #datdic.update({'PID loop in' + i: data['axisP[' + i + ']'].values})
             try:
                 datdic.update({'debug' + i: data['debug[' + i + ']'].values})
             except:
                 logging.warning('No debug['+str(i)+'] trace found!')
                 datdic.update({'debug' + i: np.zeros_like(data['rcCommand[' + i + ']'].values)})
 
-            if i=='2':
-                datdic.update({'PID sum' + i: data['axisP[' + i + ']'].values + data['axisI[' + i + ']'].values})
-                datdic.update({'d_err' + i: np.zeros_like(datdic['time_us'])})
-            else:
-                datdic.update({'PID sum' + i: data['axisP[' + i+']'].values+data['axisI[' + i+']'].values+data['axisD[' + i+']'].values})
-                datdic.update({'d_err' + i: data['axisD[' + i + ']'].values})
+            # get P trace (including case of missing trace)
+            try:
+                datdic.update({'PID loop in' + i: data['axisP[' + i + ']'].values})
+            except:
+                logging.warning('No P['+str(i)+'] trace found!')
+                datdic.update({'PID loop in' + i: np.zeros_like(data['rcCommand[' + i + ']'].values)})
+
+            try:
+                datdic.update({'d_err'+i: data['axisD[' + i+']'].values})
+            except:
+                logging.warning('No D['+str(i)+'] trace found!')
+                datdic.update({'d_err' + i: np.zeros_like(data['rcCommand[' + i + ']'].values)})
+
+            try:
+                datdic.update({'I_term'+i: data['axisI[' + i+']'].values})
+            except:
+                if i<2:
+                    logging.warning('No I['+str(i)+'] trace found!')
+                datdic.update({'I_term' + i: np.zeros_like(data['rcCommand[' + i + ']'].values)})
+
+            datdic.update({'PID sum' + i: datdic['PID loop in'+i]+datdic['I_term'+i]+datdic['d_err'+i]})
+
             if 'gyroADC[0]' in data.keys():
                 datdic.update({'gyroData' + i: data['gyroADC[' + i+']'].values})
             elif 'gyroData[0]' in data.keys():
