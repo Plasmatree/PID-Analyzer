@@ -408,6 +408,11 @@ class CSV_log:
                 fig.colorbar(pc0, cax_gyro, orientation='horizontal')
                 cax_gyro.xaxis.set_ticks_position('top')
                 cax_gyro.xaxis.set_tick_params(pad=-0.5)
+            if max_noise_gyro == 1.:
+                pc0.set_clim([1., 10.1])
+                plt.text(0.5, 0.5, 'no gyro[' + str(i) + '] trace found!\n',
+                         horizontalalignment='center', verticalalignment='center',
+                         transform=ax0.transAxes, fontdict={'color': 'white'})
 
             # debug plots
             ax1 = plt.subplot(gs1[1+i*8:1+i*8+8 , 8:15])
