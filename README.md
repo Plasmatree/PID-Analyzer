@@ -19,10 +19,10 @@ The program is Python based but utilizes Blackbox_decode.exe from blackbox_tools
 
 As an example: 
 This was the BF 3.15 stock tune (including D Setpoint weight) on my 2.5" CS110: 
-![stock tune](stock_tune.png)
+![stock tune](images/stock_tune.png)
 
 This a nice tune I came up with after some testing: 
-![good tune](good_tune.png)
+![good tune](images/good_tune.png)
 
 You can even use angle mode, the result should be the same!
 The program calculates the system response from input (PID loop input = What the quad should do) and output (Gyro = The quad does). 
