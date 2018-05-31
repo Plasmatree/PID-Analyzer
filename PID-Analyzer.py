@@ -13,6 +13,7 @@ from matplotlib.gridspec import GridSpec
 from scipy.ndimage.filters import gaussian_filter1d
 import matplotlib.colors as colors
 from scipy.optimize import minimize, basinhopping
+from six.moves import input
 
 
 # ----------------------------------------------------------------------------------
