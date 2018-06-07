@@ -1000,7 +1000,7 @@ if __name__ == "__main__":
 
             try:
                 time.sleep(0.1)
-                raw_path = sinput('Balckbox log file path (type or drop here): ')
+                raw_path = sinput('Blackbox log file path (type or drop here): ')
 
                 if raw_path == 'close':
                     logging.info('Goodbye!')
