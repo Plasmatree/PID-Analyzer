@@ -2,3 +2,4 @@ numpy==1.11.3
 scipy==1.0.0
 pandas==0.22.0
 matplotlib==2.0.0
+six==1.11.0

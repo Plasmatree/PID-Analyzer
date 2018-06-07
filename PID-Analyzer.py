@@ -13,6 +13,7 @@ from matplotlib.gridspec import GridSpec
 from scipy.ndimage.filters import gaussian_filter1d
 import matplotlib.colors as colors
 from scipy.optimize import minimize, basinhopping
+from six.moves import input
 
 
 # ----------------------------------------------------------------------------------
@@ -970,15 +971,15 @@ if __name__ == "__main__":
 
             try:
                 time.sleep(0.1)
-                raw_path = raw_input('Balckbox log file path (type or drop here): ')
+                raw_path = input('Blackbox log file path (type or drop here): ')
 
                 if raw_path=='close':
                     logging.info('Goodbye!')
                     break
 
                 raw_paths = strip_quotes(raw_path).replace("''", '""').split('""')        # seperate multiple paths
-                name = raw_input('Optional plot name:') or args.name
-                showplt = raw_input('Show plot window when done? Y/(N)') or args.show
+                name = input('Optional plot name:') or args.name
+                showplt = input('Show plot window when done? Y/(N)') or args.show
                 args.show=showplt.upper()
 
             except (EOFError, KeyboardInterrupt):
