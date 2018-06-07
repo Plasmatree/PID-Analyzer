@@ -13,6 +13,7 @@ from matplotlib.gridspec import GridSpec
 from scipy.ndimage.filters import gaussian_filter1d
 import matplotlib.colors as colors
 from scipy.optimize import minimize, basinhopping
+from six.moves import input as sinput
 
 
 # ----------------------------------------------------------------------------------
@@ -21,17 +22,16 @@ from scipy.optimize import minimize, basinhopping
 # can do whatever you want with this stuff. If we meet some day, and you think
 # this stuff is worth it, you can buy me a beer in return. Florian Melsheimer
 # ----------------------------------------------------------------------------------
-#
-#
 
-Version = 'PID-Analyzer 0.51'
+
+Version = 'PID-Analyzer 0.52'
 
 LOG_MIN_BYTES = 500000
 
 class Trace:
     framelen = 1.           # length of each single frame over which to compute response
     resplen = 0.5           # length of respose window
-    cutfreq = 50.           # cutfreqency of what is considered as input
+    cutfreq = 25.           # cutfreqency of what is considered as input
     tuk_alpha = 1.0         # alpha of tukey window, if used
     superpos = 16           # sub windowing (superpos windows in framelen)
     threshold = 500.        # threshold for 'high input rate'
@@ -47,17 +47,18 @@ class Trace:
         self.name = self.data['name']
         self.time = self.data['time']
         self.dt=self.time[0]-self.time[1]
-        self.gyro = self.data['gyro']
+
         self.input = self.data['input']
+        #enable this to generate artifical gyro trace with known system response
+        #self.data['gyro']=self.toy_out(self.input, delay=0.01, mode='normal')####
+
+        self.gyro = self.data['gyro']
         self.throttle = self.data['throttle']
         self.throt_hist, self.throt_scale = np.histogram(self.throttle, np.linspace(0, 100, 101, dtype=np.float64), normed=True)
 
         self.flen = self.stepcalc(self.time, Trace.framelen)        # array len corresponding to framelen in s
         self.rlen = self.stepcalc(self.time, Trace.resplen)         # array len corresponding to resplen in s
         self.time_resp = self.time[0:self.rlen]-self.time[0]
-
-        #enable this to generate artifical gyro trace with known system response
-        #self.data['gyro']=self.toy_out(self.input, delay=0.01, mode='normal')
 
         self.stacks = self.winstacker({'time':[],'input':[],'gyro':[], 'throttle':[]}, self.flen, Trace.superpos)                                  # [[time, input, output],]
         self.window = np.hanning(self.flen)                                     #self.tukeywin(self.flen, self.tuk_alpha)
@@ -203,6 +204,8 @@ class Trace:
             for key in stackdict.keys():
                 stackdict[key].append(self.data[key][i * shift:i * shift + flen])
         for k in stackdict.keys():
+            #print 'key',k
+            #print stackdict[k]
             stackdict[k]=np.array(stackdict[k], dtype=np.float64)
         return stackdict
 
@@ -213,7 +216,9 @@ class Trace:
         H = np.fft.fft(input, axis=-1)
         G = np.fft.fft(output,axis=-1)
         freq = np.abs(np.fft.fftfreq(len(input[0]), self.dt))
-        sn = self.to_mask(np.clip(np.abs(freq), cutfreq*0.9, cutfreq*1.))
+        sn = self.to_mask(np.clip(np.abs(freq), cutfreq-1e-9, cutfreq))
+        len_lpf=np.sum(np.ones_like(sn)-sn)
+        sn=self.to_mask(gaussian_filter1d(sn,len_lpf/6.))
         sn= 10.*(-sn+1.+1e-9)       # +1e-9 to prohibit 0/0 situations
         Hcon = np.conj(H)
         deconvolved_sm = np.real(np.fft.ifft(G * Hcon / (H * Hcon + 1./sn),axis=-1))
@@ -341,7 +346,7 @@ class Trace:
 
 class CSV_log:
 
-    def __init__(self, fpath, name, headdict):
+    def __init__(self, fpath, name, headdict, noise_bounds):
         self.file = fpath
         self.name = name
         self.headdict = headdict
@@ -352,9 +357,20 @@ class CSV_log:
         self.traces = self.find_traces(self.data)
         self.roll, self.pitch, self.yaw = self.__analyze()
         self.fig_resp = self.plot_all_resp([self.roll, self.pitch, self.yaw])
-        self.fig_noise = self.plot_all_noise([self.roll, self.pitch, self.yaw])
+        self.fig_noise = self.plot_all_noise([self.roll, self.pitch, self.yaw],noise_bounds)
 
-    def plot_all_noise(self, traces, style='fancy'): #style='fancy' gives 2d hist for response
+    def check_lims_list(self,lims):
+        if type(lims) is list:
+            l=np.array(lims)
+            if str(np.shape(l))=='(4L, 2L)':
+                ll=l[:,1]-l[:,0]
+                if np.sum(np.abs((ll-np.abs(ll))))==0:
+                    return True
+        else:
+            logging.info('noise_bounds is no valid list')
+            return False
+
+    def plot_all_noise(self, traces, lims): #style='fancy' gives 2d hist for response
         textsize = 7
         rcParams.update({'font.size': 9})
 
@@ -373,11 +389,22 @@ class CSV_log:
         thresh = 100.
         mask = traces[0].to_mask(traces[0].noise_gyro['freq_axis'].clip(thresh-1e-9,thresh))
         meanspec_max = np.max(meanspec*mask[:-1])
-        #meanspec_max = meanspec[:,25:].max(axis=1)
+
+        if not self.check_lims_list(lims):
+            lims=np.array([[1,max_noise_gyro],[1, max_noise_debug], [1, max_noise_d], [0,meanspec_max*1.5]])
+            if lims[0,1] == 1:
+                lims[0,1]=100.
+            if lims[1, 1] == 1:
+                lims[1, 1]=100.
+            if lims[2, 1] == 1:
+                lims[2, 1]=100.
+        else:
+            lims=np.array(lims)
 
         cax_gyro = plt.subplot(gs1[0, 0:7])
         cax_debug = plt.subplot(gs1[0, 8:15])
         cax_d = plt.subplot(gs1[0, 16:23])
+        cmap='viridis'
 
         axes_gyro = []
         axes_debug = []
@@ -395,22 +422,22 @@ class CSV_log:
             if len(axes_gyro):
                 axes_gyro[0].get_shared_x_axes().join(axes_gyro[0], ax0)
             axes_gyro.append(ax0)
-            plt.title('gyro '+tr.name, y=0.88, color='w')
-            pc0 = plt.pcolormesh(tr.noise_gyro['throt_axis'], tr.noise_gyro['freq_axis'], tr.noise_gyro['hist2d_sm']+1.,norm=colors.LogNorm(vmin=1.,vmax=max_noise_gyro))
-            plt.ylabel('frequency in Hz')
-            plt.grid()
-            plt.ylim(pltlim)
+            ax0.set_title('gyro '+tr.name, y=0.88, color='w')
+            pc0 = plt.pcolormesh(tr.noise_gyro['throt_axis'], tr.noise_gyro['freq_axis'], tr.noise_gyro['hist2d_sm']+1.,norm=colors.LogNorm(vmin=lims[0,0],vmax=lims[0,1]),cmap=cmap)
+            ax0.set_ylabel('frequency in Hz')
+            ax0.grid()
+            ax0.set_ylim(pltlim)
             if i < 2:
                 plt.setp(ax0.get_xticklabels(), visible=False)
             else:
-                plt.xlabel('throttle in %')
-            if max_noise_gyro==tr.noise_gyro['max']+1.:
-                fig.colorbar(pc0, cax_gyro, orientation='horizontal')
-                cax_gyro.xaxis.set_ticks_position('top')
-                cax_gyro.xaxis.set_tick_params(pad=-0.5)
+                ax0.set_xlabel('throttle in %')
+
+            fig.colorbar(pc0, cax_gyro, orientation='horizontal')
+            cax_gyro.xaxis.set_ticks_position('top')
+            cax_gyro.xaxis.set_tick_params(pad=-0.5)
+
             if max_noise_gyro == 1.:
-                pc0.set_clim([1., 10.1])
-                plt.text(0.5, 0.5, 'no gyro[' + str(i) + '] trace found!\n',
+                ax0.text(0.5, 0.5, 'no gyro[' + str(i) + '] trace found!\n',
                          horizontalalignment='center', verticalalignment='center',
                          transform=ax0.transAxes, fontdict={'color': 'white'})
 
@@ -419,26 +446,26 @@ class CSV_log:
             if len(axes_debug):
                 axes_debug[0].get_shared_x_axes().join(axes_debug[0], ax1)
             axes_debug.append(ax1)
-            plt.title('debug ' + tr.name, y=0.88, color='w')
-            pc1 = plt.pcolormesh(tr.noise_debug['throt_axis'],tr.noise_debug['freq_axis'], tr.noise_debug['hist2d_sm']+1., norm=colors.LogNorm(vmin=1.,vmax=max_noise_debug))
-            if max_noise_debug==1.:
-                pc1.set_clim([1.,10.1])
-                plt.text(0.5, 0.5, 'no debug['+str(i)+'] trace found!\n'
-                                                      'To get transmission of\n'
-                                                      '- all filters: set debug_mode = NOTCH\n'
-                                                      '- LPF only: set debug_mode = GYRO', horizontalalignment='center', verticalalignment = 'center',
-                         transform = ax1.transAxes,fontdict={'color': 'white'})
-            plt.ylabel('frequency in Hz')
-            plt.grid()
-            plt.ylim(pltlim)
+            ax1.set_title('debug ' + tr.name, y=0.88, color='w')
+            pc1 = plt.pcolormesh(tr.noise_debug['throt_axis'],tr.noise_debug['freq_axis'], tr.noise_debug['hist2d_sm']+1., norm=colors.LogNorm(vmin=lims[1,0],vmax=lims[1,1]),cmap=cmap)
+            ax1.set_ylabel('frequency in Hz')
+            ax1.grid()
+            ax1.set_ylim(pltlim)
             if i<2:
                 plt.setp(ax1.get_xticklabels(), visible=False)
             else:
-                plt.xlabel('throttle in %')
-            if max_noise_debug==tr.noise_debug['max']+1.:
-                fig.colorbar(pc1, cax_debug,  orientation='horizontal')
-                cax_debug.xaxis.set_ticks_position('top')
-                cax_debug.xaxis.set_tick_params(pad=-0.5)
+                ax1.set_xlabel('throttle in %')
+
+            fig.colorbar(pc1, cax_debug, orientation='horizontal')
+            cax_debug.xaxis.set_ticks_position('top')
+            cax_debug.xaxis.set_tick_params(pad=-0.5)
+
+            if max_noise_debug==1.:
+                ax1.text(0.5, 0.5, 'no debug['+str(i)+'] trace found!\n'
+                                                      'To get transmission of\n'
+                                                      '- all filters: set debug_mode = NOTCH\n'
+                                                      '- LPF only: set debug_mode = GYRO', horizontalalignment='center', verticalalignment = 'center',
+                                                      transform = ax1.transAxes,fontdict={'color': 'white'})
 
             if i<2:
                 # dterm plots
@@ -446,22 +473,22 @@ class CSV_log:
                 if len(axes_d):
                     axes_d[0].get_shared_x_axes().join(axes_d[0], ax2)
                 axes_d.append(ax2)
-                plt.title('D-term ' + tr.name, y=0.88, color='w')
-                pc2 = plt.pcolormesh(tr.noise_d['throt_axis'], tr.noise_d['freq_axis'], tr.noise_d['hist2d_sm']+1., norm=colors.LogNorm(vmin=1.,vmax=max_noise_d))
-                plt.ylabel('frequency in Hz')
-                plt.grid()
-                plt.ylim(pltlim)
+                ax2.set_title('D-term ' + tr.name, y=0.88, color='w')
+                pc2 = plt.pcolormesh(tr.noise_d['throt_axis'], tr.noise_d['freq_axis'], tr.noise_d['hist2d_sm']+1., norm=colors.LogNorm(vmin=lims[2,0],vmax=lims[2,1]),cmap=cmap)
+                ax2.set_ylabel('frequency in Hz')
+                ax2.grid()
+                ax2.set_ylim(pltlim)
                 plt.setp(ax2.get_xticklabels(), visible=False)
-                if max_noise_d==tr.noise_d['max']+1.:
-                    fig.colorbar(pc2, cax_d, orientation='horizontal')
-                    cax_d.xaxis.set_ticks_position('top')
-                    cax_d.xaxis.set_tick_params(pad=-0.5)
+
+                fig.colorbar(pc2, cax_d, orientation='horizontal')
+                cax_d.xaxis.set_ticks_position('top')
+                cax_d.xaxis.set_tick_params(pad=-0.5)
 
                 if max_noise_d == 1.:
-                    pc2.set_clim([1., 10.1])
-                    plt.text(0.5, 0.5, 'no D[' + str(i) + '] trace found!\n',
+                    ax2.text(0.5, 0.5, 'no D[' + str(i) + '] trace found!\n',
                              horizontalalignment='center', verticalalignment='center',
                              transform=ax2.transAxes, fontdict={'color': 'white'})
+
 
             else:
                 # throttle plots
@@ -493,7 +520,7 @@ class CSV_log:
                 axes_trans[0].get_shared_x_axes().join(axes_trans[0], ax3)
             axes_trans.append(ax3)
             ax3.fill_between(tr.noise_gyro['freq_axis'][:-1], 0, meanspec[i], label=tr.name + ' gyro noise', alpha=0.2)
-            ax3.set_ylim([0.,meanspec_max.max()*1.5])
+            ax3.set_ylim(lims[3])
             ax3.set_ylabel(tr.name+' gyro noise a.u.')
             ax3.grid()
             ax3r = plt.twinx(ax3)
@@ -517,7 +544,7 @@ class CSV_log:
             +' | Throttle min/tpa/max: ' + self.headdict['minThrottle']+'/'+self.headdict['tpa_breakpoint']+'/'+self.headdict['maxThrottle'] \
             + ' | dynThrPID: ' + self.headdict['dynThrottle']+ '| D-TermSP: ' + self.headdict['dTermSetPoint']+'| vbatComp: ' + self.headdict['vbatComp']+' | debug '+ self.headdict['debug_mode']
 
-        plt.text(0, 0, t, ha='left', va='center', rotation=90, color='grey', alpha=0.5, fontsize=textsize)
+        ax4.text(0, 0, t, ha='left', va='center', rotation=90, color='grey', alpha=0.5, fontsize=textsize)
         ax4.axis('off')
 
         ax5l = plt.subplot(gs1[:1, 24:27])
@@ -539,7 +566,7 @@ class CSV_log:
         return fig
 
 
-    def plot_all_resp(self, traces, style='fancy'): #style='fancy' gives 2d hist for response
+    def plot_all_resp(self, traces, style='ra'): # style='raw' for response vs. time in color plot
         textsize = 7
         titelsize = 10
         rcParams.update({'font.size': 9})
@@ -572,61 +599,50 @@ class CSV_log:
             plt.legend(loc=1)
             plt.xlabel('log time in s')
 
-            ###old raw data plot. maybe put it back in later as option...
-            #plt.setp(ax1.get_xticklabels(), visible=False)
-            #ax2 = plt.subplot(gs1[9:16, i*10:i*10+9], sharex=ax0)
-            #plt.pcolormesh(tr.avr_t, tr.time_resp, np.transpose(tr.spec_sm), vmin=0, vmax=2.)
-            #plt.ylabel('response time in s')
-            #ax2.get_yaxis().set_label_coords(-0.1, 0.5)
-            #plt.xlabel('log time in s')
-            #plt.xlim([tr.avr_t[0], tr.avr_t[-1]])
+            if style =='raw':
+                ###old raw data plot.
+                plt.setp(ax1.get_xticklabels(), visible=False)
+                ax2 = plt.subplot(gs1[9:16, i*10:i*10+9], sharex=ax0)
+                plt.pcolormesh(tr.avr_t, tr.time_resp, np.transpose(tr.spec_sm), vmin=0, vmax=2.)
+                plt.ylabel('response time in s')
+                ax2.get_yaxis().set_label_coords(-0.1, 0.5)
+                plt.xlabel('log time in s')
+                plt.xlim([tr.avr_t[0], tr.avr_t[-1]])
 
-            ax2 = plt.subplot(gs1[9:16, i * 10:i * 10 + 9])
-            plt.title(tr.name + ' response', y=0.88, color='w')
-            plt.pcolormesh(tr.thr_response['throt_scale'], tr.time_resp, tr.thr_response['hist2d_norm'], vmin=0., vmax=2.)
-            plt.ylabel('response time in s')
-            ax2.get_yaxis().set_label_coords(-0.1, 0.5)
-            plt.xlabel('throttle in %')
-            plt.xlim([0.,100.])
+            else:
+                ###response vs throttle plot. more useful.
+                ax2 = plt.subplot(gs1[9:16, i * 10:i * 10 + 9])
+                plt.title(tr.name + ' response', y=0.88, color='w')
+                plt.pcolormesh(tr.thr_response['throt_scale'], tr.time_resp, tr.thr_response['hist2d_norm'], vmin=0., vmax=2.)
+                plt.ylabel('response time in s')
+                ax2.get_yaxis().set_label_coords(-0.1, 0.5)
+                plt.xlabel('throttle in %')
+                plt.xlim([0.,100.])
 
 
-            if style=='fancy':
-                theCM = plt.cm.get_cmap('Blues')
+            theCM = plt.cm.get_cmap('Blues')
+            theCM._init()
+            alphas = np.abs(np.linspace(0., 0.5, theCM.N, dtype=np.float64))
+            theCM._lut[:-3,-1] = alphas
+            ax3 = plt.subplot(gs1[17:, i*10:i*10+9])
+            plt.contourf(*tr.resp_low[2], cmap=theCM, linestyles=None, antialiased=True, levels=np.linspace(0,1,20, dtype=np.float64))
+            plt.plot(tr.time_resp, tr.resp_low[0],
+                     label=tr.name + ' step response ' + '(<' + str(int(Trace.threshold)) + ') '
+                           + ' PID ' + self.headdict[tr.name + 'PID'])
+
+
+            if tr.high_mask.sum() > 0:
+                theCM = plt.cm.get_cmap('Oranges')
                 theCM._init()
                 alphas = np.abs(np.linspace(0., 0.5, theCM.N, dtype=np.float64))
                 theCM._lut[:-3,-1] = alphas
-                ax3 = plt.subplot(gs1[17:, i*10:i*10+9])
-                plt.contourf(*tr.resp_low[2], cmap=theCM, linestyles=None, antialiased=True, levels=np.linspace(0,1,20, dtype=np.float64))
-                plt.plot(tr.time_resp, tr.resp_low[0],
-                         label=tr.name + ' step response ' + '(<' + str(int(Trace.threshold)) + ') '
-                               + ' PID ' + self.headdict[tr.name + 'PID'])
+                plt.contourf(*tr.resp_high[2], cmap=theCM, linestyles=None, antialiased=True, levels=np.linspace(0,1,20, dtype=np.float64))
+                plt.plot(tr.time_resp, tr.resp_high[0],
+                     label=tr.name + ' step response ' + '(>' + str(int(Trace.threshold)) + ') '
+                           + ' PID ' + self.headdict[tr.name + 'PID'])
+            plt.xlim([-0.001,0.501])
 
 
-                if tr.high_mask.sum() > 0:
-                    theCM = plt.cm.get_cmap('Oranges')
-                    theCM._init()
-                    alphas = np.abs(np.linspace(0., 0.5, theCM.N, dtype=np.float64))
-                    theCM._lut[:-3,-1] = alphas
-                    plt.contourf(*tr.resp_high[2], cmap=theCM, linestyles=None, antialiased=True, levels=np.linspace(0,1,20, dtype=np.float64))
-                    plt.plot(tr.time_resp, tr.resp_high[0],
-                         label=tr.name + ' step response ' + '(>' + str(int(Trace.threshold)) + ') '
-                               + ' PID ' + self.headdict[tr.name + 'PID'])
-                plt.xlim([-0.001,0.501])
-
-
-            else:
-                ax3 = plt.subplot(gs1[17:, i*10:i*10+9])
-                plt.plot(tr.time_resp, tr.resp_low[0],
-                         label=tr.name + ' step response ' + '(<' + str(int(Trace.threshold)) + ') ' + ' PID ' +
-                               self.headdict[tr.name + 'PID'])
-                plt.fill_between(tr.time_resp, tr.resp_low[0] - tr.resp_low[1], tr.resp_low[0] + tr.resp_low[1], alpha=0.1)
-
-                if tr.resp_high[0].sum() > 10:
-                    plt.plot(tr.time_resp, tr.resp_high[0],
-                             label=tr.name + ' step response ' + '(>' + str(int(Trace.threshold)) + ') ' + ' PID ' +
-                                   self.headdict[tr.name + 'PID'])
-                    plt.fill_between(tr.time_resp, tr.resp_high[0] - tr.resp_high[1], tr.resp_high[0] + tr.resp_high[1],
-                                     alpha=0.1)
             plt.legend(loc=1)
             plt.ylim([0., 2])
             plt.ylabel('strength')
@@ -667,6 +683,7 @@ class CSV_log:
                    'axisD[0]', 'axisD[1]','axisD[2]',
                    'gyroADC[0]', 'gyroADC[1]', 'gyroADC[2]',
                    'gyroData[0]', 'gyroData[1]', 'gyroData[2]',
+                   'ugyroADC[0]', 'ugyroADC[1]', 'ugyroADC[2]',
                    #'accSmooth[0]','accSmooth[1]', 'accSmooth[2]',
                    'debug[0]', 'debug[1]', 'debug[2]','debug[3]',
                    #'motor[0]', 'motor[1]', 'motor[2]', 'motor[3]',
@@ -706,11 +723,12 @@ class CSV_log:
                 datdic.update({'I_term' + i: np.zeros_like(data['rcCommand[' + i + ']'].values)})
 
             datdic.update({'PID sum' + i: datdic['PID loop in'+i]+datdic['I_term'+i]+datdic['d_err'+i]})
-
             if 'gyroADC[0]' in data.keys():
                 datdic.update({'gyroData' + i: data['gyroADC[' + i+']'].values})
             elif 'gyroData[0]' in data.keys():
                 datdic.update({'gyroData' + i: data['gyroData[' + i+']'].values})
+            elif 'ugyroADC[0]' in data.keys():
+                datdic.update({'gyroData' + i: data['ugyroADC[' + i+']'].values})
             else:
                 logging.warning('No gyro trace found!')
         return datdic
@@ -735,6 +753,10 @@ class CSV_log:
             if 'KISS' in self.headdict['fwType']:
                 dic.update({'P': 1.})
                 self.headdict.update({'tpa_percent': 0.})
+            elif 'Raceflight' in self.headdict['fwType']:
+                dic.update({'P': 1.})
+                self.headdict.update({'tpa_percent': 0.})
+
             else:
                 dic.update({'P':float((self.headdict[dic['name']+'PID']).split(',')[0])})
                 self.headdict.update({'tpa_percent': (float(self.headdict['tpa_breakpoint']) - 1000.) / 10.})
@@ -745,13 +767,14 @@ class CSV_log:
 
 
 class BB_log:
-    def __init__(self, log_file_path, name, blackbox_decode, show):
+    def __init__(self, log_file_path, name, blackbox_decode, show, noise_bounds):
         self.blackbox_decode_bin_path = blackbox_decode
         self.tmp_dir = os.path.join(os.path.dirname(log_file_path), name)
         if not os.path.isdir(self.tmp_dir):
             os.makedirs(self.tmp_dir)
         self.name = name
         self.show=show
+        self.noise_bounds=noise_bounds
 
         self.loglist = self.decode(log_file_path)
         self.heads = self.beheader(self.loglist)
@@ -772,7 +795,7 @@ class BB_log:
     def _csv_iter(self, heads):
         figs = []
         for h in heads:
-            analysed = CSV_log(h['tempFile'][:-3]+'01.csv', self.name, h)
+            analysed = CSV_log(h['tempFile'][:-3]+'01.csv', self.name, h, self.noise_bounds)
             #figs.append([analysed.fig_resp,analysed.fig_noise])
             if self.show!='Y':
                 plt.cla()
@@ -912,8 +935,8 @@ class BB_log:
         return loglist
 
 
-def run_analysis(log_file_path, plot_name, blackbox_decode, show):
-    test = BB_log(log_file_path, plot_name, blackbox_decode, show)
+def run_analysis(log_file_path, plot_name, blackbox_decode, show, noise_bounds):
+    test = BB_log(log_file_path, plot_name, blackbox_decode, show, noise_bounds)
     logging.info('Analysis complete, showing plot. (Close plot to exit.)')
 
 
@@ -941,9 +964,15 @@ if __name__ == "__main__":
         default=os.path.join(os.getcwd(), 'Blackbox_decode.exe'),
         help='Path to Blackbox_decode.exe.')
     parser.add_argument('-s', '--show', default='Y', help='Y = show plot window when done.\nN = Do not. \nDefault = Y')
+    parser.add_argument('-nb', '--noise_bounds', default='[[1.,10.1],[1.,100.],[1.,100.],[0.,4.]]', help='bounds of plots in noise analysis. use "auto" for autoscaling. \n default=[[1.,10.1],[1.,100.],[1.,100.],[0.,4.]]')
     args = parser.parse_args()
 
     blackbox_decode_path = clean_path(args.blackbox_decode)
+    try:
+        args.noise_bounds = eval(args.noise_bounds)
+
+    except:
+        args.noise_bounds = args.noise_bounds
     if not os.path.isfile(blackbox_decode_path):
         parser.error(
             ('Could not find Blackbox_decode.exe (used to generate CSVs from '
@@ -957,12 +986,13 @@ if __name__ == "__main__":
 
     if args.log:
         for log_path in args.log:
-            run_analysis(clean_path(log_path), args.name, args.blackbox_decode, args.show)
+            run_analysis(clean_path(log_path), args.name, args.blackbox_decode, args.show, args.noise_bounds)
         if args.show.upper() == 'Y':
             plt.show()
         else:
             plt.cla()
             plt.clf()
+
 
     else:
         while True:
@@ -970,16 +1000,23 @@ if __name__ == "__main__":
 
             try:
                 time.sleep(0.1)
-                raw_path = raw_input('Balckbox log file path (type or drop here): ')
+                raw_path = sinput('Balckbox log file path (type or drop here): ')
 
-                if raw_path=='close':
+                if raw_path == 'close':
                     logging.info('Goodbye!')
                     break
 
-                raw_paths = strip_quotes(raw_path).replace("''", '""').split('""')        # seperate multiple paths
-                name = raw_input('Optional plot name:') or args.name
-                showplt = raw_input('Show plot window when done? Y/(N)') or args.show
-                args.show=showplt.upper()
+                raw_paths = strip_quotes(raw_path).replace("''", '""').split('""')  # seperate multiple paths
+                name = sinput('Optional plot name:') or args.name
+                showplt = sinput('Show plot window when done? [Y]/N') or args.show
+                noise_bounds = sinput('Bounds on noise plot: [default/last] | copy and edit | "auto"\nCurrent: '+str(args.noise_bounds)+'\n') or args.noise_bounds
+
+                args.show = showplt.upper()
+                try:
+                    args.noise_bounds=eval(noise_bounds)
+
+                except:
+                    args.noise_bounds = noise_bounds
 
             except (EOFError, KeyboardInterrupt):
                 logging.info('Goodbye!')
@@ -987,10 +1024,10 @@ if __name__ == "__main__":
 
             for p in raw_paths:
                 if os.path.isfile(clean_path(p)):
-                    run_analysis(clean_path(p), name, args.blackbox_decode, args.show)
+                    run_analysis(clean_path(p), name, args.blackbox_decode, args.show, args.noise_bounds)
                 else:
                     logging.info('No valid input path!')
-            if args.show=='Y':
+            if args.show == 'Y':
                 plt.show()
             else:
                 plt.cla()
