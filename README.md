@@ -1,13 +1,7 @@
-### PID-Analyzer 0.50 is online!
-- Really important correction to the Wiener-deconvolution. Now always converges to correct level.
-- Color plot in PID window shows correlation of throttle and response instead of raw data. Much useful.
 
-This was new in 0.40:
-- Now with noise analysis ([see wiki](https://github.com/Plasmatree/PID-Analyzer/wiki/Noise-analysis))
-- scaled down plot window size, better if you are using it on a screen <FHD
-- you can choose not to display the plot window at all. Useful for files with lots of sublogs. Also saves on ram.
-- Now two images save automatically (PID and noise plot)
-
+### PID-Analyzer 0.52 changes:
+- Fixed the noise plot ranges for better visual comparability with option for custom or auto range
+- slight change to s/n in deconvolution: Gaussian instead of digital s/n
 
 # PID-Analyzer
 
