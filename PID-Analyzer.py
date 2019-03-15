@@ -442,23 +442,23 @@ class CSV_log:
                          transform=ax0.transAxes, fontdict={'color': 'white'})
 
             # debug plots
-            ax1 = plt.subplot(gs1[1+i*8:1+i*8+8 , 8:15])
-            if len(axes_debug):
-                axes_debug[0].get_shared_x_axes().join(axes_debug[0], ax1)
-            axes_debug.append(ax1)
-            ax1.set_title('debug ' + tr.name, y=0.88, color='w')
-            pc1 = plt.pcolormesh(tr.noise_debug['throt_axis'],tr.noise_debug['freq_axis'], tr.noise_debug['hist2d_sm']+1., norm=colors.LogNorm(vmin=lims[1,0],vmax=lims[1,1]),cmap=cmap)
-            ax1.set_ylabel('frequency in Hz')
-            ax1.grid()
-            ax1.set_ylim(pltlim)
-            if i<2:
-                plt.setp(ax1.get_xticklabels(), visible=False)
-            else:
-                ax1.set_xlabel('throttle in %')
-
-            fig.colorbar(pc1, cax_debug, orientation='horizontal')
-            cax_debug.xaxis.set_ticks_position('top')
-            cax_debug.xaxis.set_tick_params(pad=-0.5)
+            if correctdebugmode == True: # only plot debug if correctdebugmode
+            	ax1 = plt.subplot(gs1[1+i*8:1+i*8+8 , 8:15])
+            	if len(axes_debug):
+                	axes_debug[0].get_shared_x_axes().join(axes_debug[0], ax1)
+            	axes_debug.append(ax1)
+            	ax1.set_title('debug ' + tr.name, y=0.88, color='w')
+            	pc1 = plt.pcolormesh(tr.noise_debug['throt_axis'],tr.noise_debug['freq_axis'], tr.noise_debug['hist2d_sm']+1., norm=colors.LogNorm(vmin=lims[1,0],vmax=lims[1,1]),cmap=cmap)
+            	ax1.set_ylabel('frequency in Hz')
+            	ax1.grid()
+            	ax1.set_ylim(pltlim)
+            	if i<2:
+                	plt.setp(ax1.get_xticklabels(), visible=False)
+            	else:
+                	ax1.set_xlabel('throttle in %')
+            	fig.colorbar(pc1, cax_debug, orientation='horizontal')
+            	cax_debug.xaxis.set_ticks_position('top')
+            	cax_debug.xaxis.set_tick_params(pad=-0.5)
 
             if max_noise_debug==1.:
                 ax1.text(0.5, 0.5, 'no debug['+str(i)+'] trace found!\n'
@@ -693,6 +693,8 @@ class CSV_log:
         datdic.update({'time_us': data['time (us)'].values * 1e-6})
         datdic.update({'throttle': data['rcCommand[3]'].values})
 
+        correctdebugmode=not np.any(data['debug[3]']) # if debug[3] is not zeros, debug_mode is not correct for plotting
+        
         for i in ['0', '1', '2']:
             datdic.update({'rcCommand' + i: data['rcCommand['+i+']'].values})
             #datdic.update({'PID loop in' + i: data['axisP[' + i + ']'].values})
