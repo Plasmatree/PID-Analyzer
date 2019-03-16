@@ -466,6 +466,11 @@ class CSV_log:
                                                       '- all filters: set debug_mode = NOTCH\n'
                                                       '- LPF only: set debug_mode = GYRO', horizontalalignment='center', verticalalignment = 'center',
                                                       transform = ax1.transAxes,fontdict={'color': 'white'})
+                
+            if correctdebugmode == False:
+                ax1.text(0.5, 0.5, 'warning: debug does not contain prefiltered gyro\n'
+                                                      'set debug_mode = GYRO_SCALED', horizontalalignment='center', verticalalignment = 'center',
+                                                      transform = ax1.transAxes,fontdict={'color': 'white'})
 
             if i<2:
                 # dterm plots
@@ -675,6 +680,7 @@ class CSV_log:
     def readcsv(self, fpath):
         logging.info('Reading: Log '+str(self.headdict['logNum']))
         datdic = {}
+        global correctdebugmode
         ### keycheck for 'usecols' only reads usefull traces, uncommend if needed
         wanted =  ['time (us)',
                    'rcCommand[0]', 'rcCommand[1]', 'rcCommand[2]', 'rcCommand[3]',
@@ -692,6 +698,8 @@ class CSV_log:
         data = read_csv(fpath, header=0, skipinitialspace=1, usecols=lambda k: k in wanted, dtype=np.float64)
         datdic.update({'time_us': data['time (us)'].values * 1e-6})
         datdic.update({'throttle': data['rcCommand[3]'].values})
+        
+        correctdebugmode = not np.any(data['debug[3]']) # if debug[3] contains data, debug_mode is not correct for plotting 
 
         for i in ['0', '1', '2']:
             datdic.update({'rcCommand' + i: data['rcCommand['+i+']'].values})
