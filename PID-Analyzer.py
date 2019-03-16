@@ -454,8 +454,7 @@ class CSV_log:
             if i<2:
                 plt.setp(ax1.get_xticklabels(), visible=False)
             else:
-                ax1.set_xlabel('throttle in %')
-                
+                ax1.set_xlabel('throttle in %') 
             fig.colorbar(pc1, cax_debug, orientation='horizontal')
             cax_debug.xaxis.set_ticks_position('top')
             cax_debug.xaxis.set_tick_params(pad=-0.5)
