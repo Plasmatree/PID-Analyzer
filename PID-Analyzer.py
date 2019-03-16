@@ -697,7 +697,7 @@ class CSV_log:
         datdic.update({'time_us': data['time (us)'].values * 1e-6})
         datdic.update({'throttle': data['rcCommand[3]'].values})
 
-        correctdebugmode=not np.any(data['debug[3]']) # if debug[3] is not zeros, debug_mode is not correct for plotting
+        correctdebugmode = not np.any(data['debug[3]']) # if debug[3] is not zeros, debug_mode is not correct for plotting
         
         for i in ['0', '1', '2']:
             datdic.update({'rcCommand' + i: data['rcCommand['+i+']'].values})
