@@ -442,29 +442,33 @@ class CSV_log:
                          transform=ax0.transAxes, fontdict={'color': 'white'})
 
             # debug plots
-            if correctdebugmode == True: # only plot debug if correctdebugmode
-            	ax1 = plt.subplot(gs1[1+i*8:1+i*8+8 , 8:15])
-            	if len(axes_debug):
-                	axes_debug[0].get_shared_x_axes().join(axes_debug[0], ax1)
-            	axes_debug.append(ax1)
-            	ax1.set_title('debug ' + tr.name, y=0.88, color='w')
-            	pc1 = plt.pcolormesh(tr.noise_debug['throt_axis'],tr.noise_debug['freq_axis'], tr.noise_debug['hist2d_sm']+1., norm=colors.LogNorm(vmin=lims[1,0],vmax=lims[1,1]),cmap=cmap)
-            	ax1.set_ylabel('frequency in Hz')
-            	ax1.grid()
-            	ax1.set_ylim(pltlim)
-            	if i<2:
-                	plt.setp(ax1.get_xticklabels(), visible=False)
-            	else:
-                	ax1.set_xlabel('throttle in %')
-            	fig.colorbar(pc1, cax_debug, orientation='horizontal')
-            	cax_debug.xaxis.set_ticks_position('top')
-            	cax_debug.xaxis.set_tick_params(pad=-0.5)
+            ax1 = plt.subplot(gs1[1+i*8:1+i*8+8 , 8:15])
+            if len(axes_debug):
+                axes_debug[0].get_shared_x_axes().join(axes_debug[0], ax1)
+            axes_debug.append(ax1)
+            ax1.set_title('debug ' + tr.name, y=0.88, color='w')
+            pc1 = plt.pcolormesh(tr.noise_debug['throt_axis'],tr.noise_debug['freq_axis'], tr.noise_debug['hist2d_sm']+1., norm=colors.LogNorm(vmin=lims[1,0],vmax=lims[1,1]),cmap=cmap)
+            ax1.set_ylabel('frequency in Hz')
+            ax1.grid()
+            ax1.set_ylim(pltlim)
+            if i<2:
+                plt.setp(ax1.get_xticklabels(), visible=False)
+            else:
+                ax1.set_xlabel('throttle in %')
+            fig.colorbar(pc1, cax_debug, orientation='horizontal')
+            cax_debug.xaxis.set_ticks_position('top')
+            cax_debug.xaxis.set_tick_params(pad=-0.5)
 
             if max_noise_debug==1.:
                 ax1.text(0.5, 0.5, 'no debug['+str(i)+'] trace found!\n'
                                                       'To get transmission of\n'
                                                       '- all filters: set debug_mode = NOTCH\n'
                                                       '- LPF only: set debug_mode = GYRO', horizontalalignment='center', verticalalignment = 'center',
+                                                      transform = ax1.transAxes,fontdict={'color': 'white'})
+                
+            if correctdebugmode == False: # if debug does not contain prefiltered gyro data
+                ax1.text(0.5, 0.5, 'warning: debug does not contain prefiltered gyro\n'
+                                                      'set debug_mode = GYRO_SCALED', horizontalalignment='center', verticalalignment = 'top',
                                                       transform = ax1.transAxes,fontdict={'color': 'white'})
 
             if i<2:
