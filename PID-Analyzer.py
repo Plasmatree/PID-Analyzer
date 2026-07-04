@@ -54,7 +54,7 @@ class Trace:
 
         self.gyro = self.data['gyro']
         self.throttle = self.data['throttle']
-        self.throt_hist, self.throt_scale = np.histogram(self.throttle, np.linspace(0, 100, 101, dtype=np.float64), normed=True)
+        self.throt_hist, self.throt_scale = np.histogram(self.throttle, np.linspace(0, 100, 101, dtype=np.float64), density=True)
 
         self.flen = self.stepcalc(self.time, Trace.framelen)        # array len corresponding to framelen in s
         self.rlen = self.stepcalc(self.time, Trace.resplen)         # array len corresponding to resplen in s
@@ -200,6 +200,13 @@ class Trace:
         tlen = len(self.data['time'])
         shift = int(flen/superpos)
         wins = int(tlen/shift)-superpos
+        # guard against the last window(s) overrunning the data (happens when
+        # flen isn't a clean multiple of shift*superpos, e.g. very low effective
+        # sample rate logs) which would otherwise produce a ragged stack.
+        if tlen >= flen:
+            wins = max(0, min(wins, int((tlen - flen) / shift) + 1))
+        else:
+            wins = 0
         for i in np.arange(wins):
             for key in stackdict.keys():
                 stackdict[key].append(self.data[key][i * shift:i * shift + flen])
@@ -270,7 +277,7 @@ class Trace:
 
         hist2d = np.histogram2d(throts.flatten(), freqs.flatten(),
                                 range=[[0, 100], [y[0], y[-1]]],
-                                bins=bins, weights=weights.flatten(), normed=False)[0].transpose()
+                                bins=bins, weights=weights.flatten(), density=False)[0].transpose()
 
         hist2d = np.array(abs(hist2d), dtype=np.float64)
         hist2d_norm = np.copy(hist2d)
@@ -291,7 +298,7 @@ class Trace:
         weights = abs(spec.real)
         avr_thr = np.abs(thr).max(axis=1)
 
-        hist2d=self.hist2d(avr_thr, freq,weights,[101,len(freq)/4])
+        hist2d=self.hist2d(avr_thr, freq,weights,[101,len(freq)//4])
 
         filt_width = 3  # width of gaussian smoothing for hist data
         hist2d_sm = gaussian_filter1d(hist2d['hist2d_norm'], filt_width, axis=1, mode='constant')
@@ -379,16 +386,22 @@ class CSV_log:
         ### gridspec devides window into 25 horizontal, 31 vertical fields
         gs1 = GridSpec(25, 3 * 10+2, wspace=0.6, hspace=0.7, left=0.04, right=1., bottom=0.05, top=0.97)
 
-        max_noise_gyro = np.max([traces[0].noise_gyro['max'],traces[1].noise_gyro['max'],traces[2].noise_gyro['max']])+1.
-        max_noise_debug = np.max([traces[0].noise_debug['max'], traces[1].noise_debug['max'], traces[2].noise_debug['max']])+1.
-        max_noise_d = np.max([traces[0].noise_d['max'], traces[1].noise_d['max'], traces[2].noise_d['max']])+1.
+        # data with heavy frame loss can leave some analysis windows empty, which
+        # propagates as NaN through the spectra; fall back to 0 (treated as "no
+        # data" by the existing lims[*,1]==1 defaulting below) instead of crashing.
+        def _sanitize(x):
+            return np.nan_to_num(x, nan=0.0, posinf=0.0, neginf=0.0)
+
+        max_noise_gyro = _sanitize(np.max([traces[0].noise_gyro['max'],traces[1].noise_gyro['max'],traces[2].noise_gyro['max']]))+1.
+        max_noise_debug = _sanitize(np.max([traces[0].noise_debug['max'], traces[1].noise_debug['max'], traces[2].noise_debug['max']]))+1.
+        max_noise_d = _sanitize(np.max([traces[0].noise_d['max'], traces[1].noise_d['max'], traces[2].noise_d['max']]))+1.
 
         meanspec = np.array([traces[0].noise_gyro['hist2d_sm'].mean(axis=1).flatten(),
                     traces[1].noise_gyro['hist2d_sm'].mean(axis=1).flatten(),
                     traces[2].noise_gyro['hist2d_sm'].mean(axis=1).flatten()],dtype=np.float64)
         thresh = 100.
         mask = traces[0].to_mask(traces[0].noise_gyro['freq_axis'].clip(thresh-1e-9,thresh))
-        meanspec_max = np.max(meanspec*mask[:-1])
+        meanspec_max = _sanitize(np.max(meanspec*mask[:-1]))
 
         if not self.check_lims_list(lims):
             lims=np.array([[1,max_noise_gyro],[1, max_noise_debug], [1, max_noise_d], [0,meanspec_max*1.5]])
@@ -420,10 +433,10 @@ class CSV_log:
             # gyro plots
             ax0 = plt.subplot(gs1[1+i*8:1+i*8+8 , 0:7])
             if len(axes_gyro):
-                axes_gyro[0].get_shared_x_axes().join(axes_gyro[0], ax0)
+                ax0.sharex(axes_gyro[0])
             axes_gyro.append(ax0)
             ax0.set_title('gyro '+tr.name, y=0.88, color='w')
-            pc0 = plt.pcolormesh(tr.noise_gyro['throt_axis'], tr.noise_gyro['freq_axis'], tr.noise_gyro['hist2d_sm']+1.,norm=colors.LogNorm(vmin=lims[0,0],vmax=lims[0,1]),cmap=cmap)
+            pc0 = plt.pcolormesh(tr.noise_gyro['throt_axis'], tr.noise_gyro['freq_axis'], tr.noise_gyro['hist2d_sm']+1.,norm=colors.LogNorm(vmin=lims[0,0],vmax=lims[0,1]),cmap=cmap, shading='auto')
             ax0.set_ylabel('frequency in Hz')
             ax0.grid()
             ax0.set_ylim(pltlim)
@@ -444,10 +457,10 @@ class CSV_log:
             # debug plots
             ax1 = plt.subplot(gs1[1+i*8:1+i*8+8 , 8:15])
             if len(axes_debug):
-                axes_debug[0].get_shared_x_axes().join(axes_debug[0], ax1)
+                ax1.sharex(axes_debug[0])
             axes_debug.append(ax1)
             ax1.set_title('debug ' + tr.name, y=0.88, color='w')
-            pc1 = plt.pcolormesh(tr.noise_debug['throt_axis'],tr.noise_debug['freq_axis'], tr.noise_debug['hist2d_sm']+1., norm=colors.LogNorm(vmin=lims[1,0],vmax=lims[1,1]),cmap=cmap)
+            pc1 = plt.pcolormesh(tr.noise_debug['throt_axis'],tr.noise_debug['freq_axis'], tr.noise_debug['hist2d_sm']+1., norm=colors.LogNorm(vmin=lims[1,0],vmax=lims[1,1]),cmap=cmap, shading='auto')
             ax1.set_ylabel('frequency in Hz')
             ax1.grid()
             ax1.set_ylim(pltlim)
@@ -471,10 +484,10 @@ class CSV_log:
                 # dterm plots
                 ax2 = plt.subplot(gs1[1 + i * 8:1 + i * 8 + 8, 16:23])
                 if len(axes_d):
-                    axes_d[0].get_shared_x_axes().join(axes_d[0], ax2)
+                    ax2.sharex(axes_d[0])
                 axes_d.append(ax2)
                 ax2.set_title('D-term ' + tr.name, y=0.88, color='w')
-                pc2 = plt.pcolormesh(tr.noise_d['throt_axis'], tr.noise_d['freq_axis'], tr.noise_d['hist2d_sm']+1., norm=colors.LogNorm(vmin=lims[2,0],vmax=lims[2,1]),cmap=cmap)
+                pc2 = plt.pcolormesh(tr.noise_d['throt_axis'], tr.noise_d['freq_axis'], tr.noise_d['hist2d_sm']+1., norm=colors.LogNorm(vmin=lims[2,0],vmax=lims[2,1]),cmap=cmap, shading='auto')
                 ax2.set_ylabel('frequency in Hz')
                 ax2.grid()
                 ax2.set_ylim(pltlim)
@@ -495,7 +508,7 @@ class CSV_log:
                 ax21 = plt.subplot(gs1[1 + i * 8:1 + i * 8 + 4, 16:23])
                 ax22 = plt.subplot(gs1[1 + i * 8 + 5:1 + i * 8 + 8, 16:23])
                 ax21.bar(tr.throt_scale[:-1], tr.throt_hist*100., width=1.,align='edge', color='black', alpha=0.2, label='throttle distribution')
-                axes_d[0].get_shared_x_axes().join(axes_d[0], ax21)
+                ax21.sharex(axes_d[0])
                 ax21.vlines(self.headdict['tpa_percent'], 0., 100., label='tpa', colors='red', alpha=0.5)
                 ax21.grid()
                 ax21.set_ylim([0., np.max(tr.throt_hist) * 100. * 1.1])
@@ -517,7 +530,7 @@ class CSV_log:
             # transmission plots
             ax3 = plt.subplot(gs1[1+i*8:1+i*8+8 , 24:30])
             if len(axes_trans):
-                axes_trans[0].get_shared_x_axes().join(axes_trans[0], ax3)
+                ax3.sharex(axes_trans[0])
             axes_trans.append(ax3)
             ax3.fill_between(tr.noise_gyro['freq_axis'][:-1], 0, meanspec[i], label=tr.name + ' gyro noise', alpha=0.2)
             ax3.set_ylim(lims[3])
@@ -603,7 +616,7 @@ class CSV_log:
                 ###old raw data plot.
                 plt.setp(ax1.get_xticklabels(), visible=False)
                 ax2 = plt.subplot(gs1[9:16, i*10:i*10+9], sharex=ax0)
-                plt.pcolormesh(tr.avr_t, tr.time_resp, np.transpose(tr.spec_sm), vmin=0, vmax=2.)
+                plt.pcolormesh(tr.avr_t, tr.time_resp, np.transpose(tr.spec_sm), vmin=0, vmax=2., shading='auto')
                 plt.ylabel('response time in s')
                 ax2.get_yaxis().set_label_coords(-0.1, 0.5)
                 plt.xlabel('log time in s')
@@ -613,14 +626,14 @@ class CSV_log:
                 ###response vs throttle plot. more useful.
                 ax2 = plt.subplot(gs1[9:16, i * 10:i * 10 + 9])
                 plt.title(tr.name + ' response', y=0.88, color='w')
-                plt.pcolormesh(tr.thr_response['throt_scale'], tr.time_resp, tr.thr_response['hist2d_norm'], vmin=0., vmax=2.)
+                plt.pcolormesh(tr.thr_response['throt_scale'][:-1], tr.time_resp, tr.thr_response['hist2d_norm'], vmin=0., vmax=2., shading='nearest')
                 plt.ylabel('response time in s')
                 ax2.get_yaxis().set_label_coords(-0.1, 0.5)
                 plt.xlabel('throttle in %')
                 plt.xlim([0.,100.])
 
 
-            theCM = plt.cm.get_cmap('Blues')
+            theCM = plt.colormaps['Blues']
             theCM._init()
             alphas = np.abs(np.linspace(0., 0.5, theCM.N, dtype=np.float64))
             theCM._lut[:-3,-1] = alphas
@@ -632,7 +645,7 @@ class CSV_log:
 
 
             if tr.high_mask.sum() > 0:
-                theCM = plt.cm.get_cmap('Oranges')
+                theCM = plt.colormaps['Oranges']
                 theCM._init()
                 alphas = np.abs(np.linspace(0., 0.5, theCM.N, dtype=np.float64))
                 theCM._lut[:-3,-1] = alphas
